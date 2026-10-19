@@ -116,18 +116,43 @@ const manifest = {
   scenarios: [],
 };
 let total = 0, done = 0;
-for (const s of scenarios) {
-  const rawFile = join(outDir, `${s.name}.sb3g`);
-  const data = s.data ?? 'sonicbros3.bin';
+function traceArgs(s, rawFile) {
+  const data = s.data ?? (s.campaignAct ? 'web-data/campaign.bin' : 'sonicbros3.bin');
+  const zone = typeof s.zone === 'number' ? s.zone.toString(16).padStart(2, '0') : s.zone;
   const args = ['--start', s.start ?? 'level', '--no-build', '--data', data,
     '--golden', rawFile, '--scenario', s.name, '--frames', String(s.frames ?? 1200),
     '--hash-every', '30', '--snapshot-every', '60'];
   if (s.level) args.push('--level', s.level);
-  if (s.zone) args.push('--zone', s.zone, '--act', String(s.act));
+  if (zone) args.push('--zone', zone, '--act', String(s.act ?? 1));
   if (s.campaignAct) args.push('--campaign-act', String(s.campaignAct), '--world', String(s.world ?? 1));
   if (s.debug) args.push('--debug-start', s.debug);
-  if (s.script) args.push('--inputs', join(inputsDir, `${s.script}.txt`));
-  run(exe, args, `trace ${s.name}`);
+  const script = s.script ?? s.inputs;
+  if (script) args.push('--inputs', join(inputsDir, `${script}.txt`));
+  return args;
+}
+if (process.argv.includes('--verify')) {
+  const entries = priorScenarios.filter(e => !only || e.name === only || e.name.startsWith(only + '-'));
+  let ok = 0, bad = 0;
+  for (const e of entries) {
+    const raw = join(outDir, `.verify-${e.name}.sb3g`);
+    run(exe, traceArgs({
+      ...e, start: e.start ?? 'level', debug: e.debugStart, script: e.inputs,
+      data: e.data ?? (e.campaignAct ? 'web-data/campaign.bin' : 'sonicbros3.bin'),
+    }, raw), `verify ${e.name}`);
+    const gz = raw + '.gz';
+    writeFileSync(gz, gzipSync(readFileSync(raw), { level: 9 }));
+    unlinkSync(raw);
+    const hash = fileSha(gz);
+    unlinkSync(gz);
+    if (hash === e.sha256) ok++;
+    else { bad++; console.log(`MISMATCH ${e.name}: manifest ${e.sha256}, now ${hash}`); }
+  }
+  console.log(`verify: ${ok} match, ${bad} differ`);
+  process.exit(bad ? 1 : 0);
+}
+for (const s of scenarios) {
+  const rawFile = join(outDir, `${s.name}.sb3g`);
+  run(exe, traceArgs(s, rawFile), `trace ${s.name}`);
   let file = rawFile;
   if (!keepRaw) {
     file = rawFile + '.gz';
@@ -138,9 +163,10 @@ for (const s of scenarios) {
   total += size;
   manifest.scenarios.push({
     name: s.name, file: basename(file), sha256: fileSha(file), bytes: size,
-    level: s.level ?? null, zone: s.zone ? parseInt(s.zone, 16) : null, act: s.act ?? null,
-    world: s.world ?? null, campaignAct: s.campaignAct ?? null, debugStart: s.debug ?? null,
-    inputs: s.script ?? null, frames: s.frames ?? 1200,
+    level: s.level ?? null, zone: typeof s.zone === 'number' ? s.zone : s.zone ? parseInt(s.zone, 16) : null,
+    act: s.act ?? null, world: s.world ?? null, campaignAct: s.campaignAct ?? null,
+    debugStart: s.debug ?? null, inputs: s.script ?? null, frames: s.frames ?? 1200,
+    start: s.start ?? 'level', data: s.data ?? 'sonicbros3.bin',
   });
   if (++done % 25 === 0) console.log(`  ${done}/${scenarios.length}`);
 }

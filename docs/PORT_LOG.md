@@ -125,6 +125,24 @@ Snapshots every 60 ticks carry the occupied object slots and the full RAM SHA-25
   collision/audio). This keeps the engine port provable while honouring the stock-ROM goal.
 * Audio is not in the bit-exact traces (floating-point chips). Separate non-bit-exact audio tests will follow.
 
+## 2026-10-19 — Phase 1 final set (verified)
+
+* **571 traces / 286,400 ticks / 11.72 MiB gzipped**, all committed under `tests/golden/` with `manifest.json`.
+  * 510 campaign traces (every non-blocked area, `idle` + `right`, 420 ticks).
+  * 34 Sonic-zone traces (`$00` acts 1–2, `$11` acts 1–2, `$12` act 1, `$13` acts 1–2, `$14` act 1;
+    `idle`/`right`/`jump`/`spindash`, plus EHZ act 2 and MZ act 3 boss starts).
+  * 23 SMB3 traces (1-1/1-2/1-3, goal/death/hill/goomba-pipe, pipe entry and pipe-jump).
+  * 4 frontend traces (title, title→map, map, card game).
+* All level traces reach `Playing`. Pipe traces show the session switching to the alternate area (act 30 / 27);
+  goal traces show `FadeOut` → map.
+* `cargo test -p golden-trace` on the full set: **2 passed** (6.6 s); `cargo fmt --check` and
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
+* Determinism re-checked with `--verify`: core 1/1 and frontend 4/4 reproduce byte-identically.
+* `tools/golden/{inspect,summarize}.mjs` and `cargo run -p golden-trace --bin compare -- a b` for diagnosis.
+* Docs split: the legacy design notes moved to `legacy/docs/`; current docs are `docs/{INVENTORY,PORT_LOG,KNOWN_ISSUES,README}.md`.
+
+**Phase 1 is complete. No Rust engine code has been written yet.**
+
 ## 2026-10-19 — Phase 2 plan (for approval)
 
 Two workstreams, per the owner's decision:

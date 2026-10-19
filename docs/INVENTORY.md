@@ -4,6 +4,10 @@ _Status: draft for approval. Written 2026-10-19 after reading the repo, building
 test suite. Line-level detail was read for the files listed as "read"; others are described from the existing
 `docs/` and the module's public surface. Corrections welcome._
 
+> **Path note (2026-10-19):** after this inventory was written, the legacy implementation was moved under `legacy/`.
+> Read `src/…` below as `legacy/src/…`, `tests/…` as `legacy/tests/…`, `tools/…` as `legacy/tools/…`, and `web/…` as
+> `legacy/web/…`. The new Rust workspace is at the repo root.
+
 ## 0. TL;DR
 
 * The **game** is C# (`src/SonicBros3`). It is a hand-port of the 68k engine in a **modified Sonic 2 ROM** plus
@@ -261,11 +265,11 @@ Notes: one `GameState` passed as `&mut`; entities by slot index into the RAM arr
 ## 14. How to build / run today (verified)
 
 ```powershell
-dotnet build SonicBros3.slnx                     # OK (2 nullable warnings)
-dotnet test tests/SonicBros3.Tests                # 136 passed
-dotnet run --project src/SonicBros3               # play (needs sonicbros3.bin; builds it if stale)
-dotnet run --project src/SonicBros3 -- --start level --level 1-1 --screenshot out.png --frames 120 --trace
-npm start                                          # web UI at http://127.0.0.1:3000 (publishes WASM with .NET)
-npm test                                           # Node tests
-npm run campaign                                   # build web-data/campaign.bin
+dotnet build legacy/SonicBros3.slnx               # OK (2 nullable warnings)
+dotnet test legacy/tests/SonicBros3.Tests          # 136 passed
+dotnet run --project legacy/src/SonicBros3         # play (needs sonicbros3.bin; builds it if stale)
+dotnet run --project legacy/src/SonicBros3 -- --start level --level 1-1 --screenshot out.png --frames 120 --trace
+npm start                                          # (from legacy/) web UI at http://127.0.0.1:3000
+npm test                                           # (from legacy/) Node tests
+npm run campaign                                   # (from legacy/) build web-data/campaign.bin
 ```

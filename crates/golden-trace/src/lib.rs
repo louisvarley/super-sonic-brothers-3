@@ -403,4 +403,6 @@ pub struct ManifestScenario {
     pub debug_start: Option<String>,
     pub inputs: Option<String>,
     pub frames: u32,
+    pub start: Option<String>,
+    pub data: Option<String>,
 }

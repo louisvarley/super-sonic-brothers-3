@@ -1,0 +1,16 @@
+# Golden traces are binary (gzip); never normalise line endings.
+*.sb3g binary
+*.sb3g.gz binary
+
+# ROMs and derived archives are binary if ever present locally (they are ignored).
+*.bin binary
+*.nes binary
+*.smd binary
+*.zip binary
+*.png binary
+
+# Keep source line endings as authored.
+*.rs text eol=lf
+*.mjs text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
