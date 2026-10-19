@@ -124,3 +124,29 @@ Snapshots every 60 ticks carry the occupied object slots and the full RAM SHA-25
   stock-ROM importer is workstream 2; its output will differ in the documented ways (no Green Hill/Marble, substitute
   collision/audio). This keeps the engine port provable while honouring the stock-ROM goal.
 * Audio is not in the bit-exact traces (floating-point chips). Separate non-bit-exact audio tests will follow.
+
+## 2026-10-19 — Phase 2 plan (for approval)
+
+Two workstreams, per the owner's decision:
+
+1. **Engine equivalence against the legacy oracle.** Port `engine-core` module by module and replay the committed
+   `.sb3g` traces with `golden-trace`. The oracle input is the pinned local `sonicbros3.bin` / `campaign.bin` (never
+   committed/shipped). This proves the port before any asset-source change.
+2. **Stock-ROM importer.** Replace the legacy archive as the shipped source with a build/first-run extractor that reads
+   stock Sonic 2 + SMB3 and writes `data.bin`. Document the unavoidable deviations (no Green Hill/Marble; the SMB3
+   slope collision mapping and 68k SMPS data need stock substitutes). This is the repo's stated unfinished goal.
+
+Module order and checkpoints:
+
+| Milestone | Crates | Proof |
+|---|---|---|
+| M1 primitives | `engine-core`: `Ram` (big-endian 64 KiB, aliasing), `Vars`, object-slot accessors, `MdMath` tables | unit tests for byte/word/long wrap and every documented math quirk |
+| M2 archive + level | `rom-assets` (ZIP/JSON/indexed-PNG reader) + `engine-core` level loader/`World` setup | load `zones/zone_40/act_1` and match the legacy initial RAM hash from a trace snapshot |
+| M3 player + camera | `engine-core`: player physics, collision probes, camera, rings, HUD, PLC queue | 1-1 `idle`/`right`/`jump`/`spindash` traces diverge-free |
+| M4 objects | `engine-core`: SMB3 objects first (block/goomba/koopa/plants/boomerang/goal), then Sonic common/Green Hill/Marble/Emerald Hill (needed for oracle traces even though the stock build drops them) | per-object traces, then goal/death/pipe/boss traces |
+| M5 frontend | `engine-core`: SMB3 title, world map, card game, level select, `Vdp::RenderScreen` | frontend traces + frame hashes |
+| M6 audio | `engine-core`: 68k SMPS + Z80 SMPS players, YM2612/PSG/DAC, mixer | non-bit-exact: non-silent, per-band spectrum; driver-RAM replay once the mixer is bit-reproducible |
+| M7 stock importer | `rom-assets`: stock Sonic 2 + SMB3 extraction, SMB3 zone builder/campaign, 6502, music conversion | byte-level comparison on the shared subset; documented deviations |
+| M8 platforms | `platform-native` (exe, static CRT), `platform-web` (WASM), `xtask` | headless replay, then window/canvas/audio |
+
+No engine code is written until this plan/layout is approved.

@@ -40,6 +40,7 @@ const scripts = {
   goal: '0 -\n201 R\n241 RA\n261 R\n',
   goal12: '0 -\n201 R\n219 RA\n239 R\n',
   goal13: '0 -\n401 R\n441 RA\n449 R\n',
+  title: '0 -\n101 S\n102 -\n103 S\n104 -\n',
 };
 for (const [name, body] of Object.entries(scripts)) writeFileSync(join(inputsDir, `${name}.txt`), body);
 
@@ -63,9 +64,18 @@ const SPECIAL = [
   { name: 'smb3-1-2-hill', level: '1-2', script: 'hill', frames: 900 },
   { name: 'smb3-1-2-goal', level: '1-2', debug: '2670,370', script: 'goal12', frames: 1600 },
   { name: 'smb3-1-2-goomba-pipe', level: '1-2', debug: '480,360', script: 'idle', frames: 900 },
+  { name: 'smb3-1-2-goomba-pipe-safe', level: '1-2', debug: '520,360', script: 'idle', frames: 900 },
   { name: 'smb3-1-3-goal', level: '1-3', debug: '2350,396', script: 'goal13', frames: 1600 },
   { name: 'smb3-1-1-pipe', zone: '40', act: 1, data: 'web-data/campaign.bin', debug: '2272,93', script: 'down', frames: 500 },
+  { name: 'smb3-1-1-pipe-jump', zone: '40', act: 1, data: 'web-data/campaign.bin', debug: '2272,60', script: 'down', frames: 600 },
   { name: 'smb3-1-2-pipe', zone: '41', act: 1, data: 'web-data/campaign.bin', debug: '1200,253', script: 'down', frames: 700 },
+  { name: 'smb3-1-2-pipe-jump', zone: '41', act: 1, data: 'web-data/campaign.bin', debug: '1200,220', script: 'down', frames: 800 },
+  { name: 'sonic-ehz-2-boss', zone: '00', act: 2, debug: '10704,1000', script: 'jump', frames: 2200 },
+  { name: 'sonic-mz-3-boss', zone: '14', act: 1, debug: '6656,700', script: 'jump', frames: 2600 },
+  { name: 'frontend-title', start: 'title', frames: 600 },
+  { name: 'frontend-title-map', start: 'title', script: 'title', frames: 700 },
+  { name: 'frontend-map', start: 'map', frames: 400 },
+  { name: 'frontend-match', start: 'match', frames: 400 },
 ];
 
 const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
@@ -93,6 +103,10 @@ if (includeCampaign) {
 }
 
 console.log(`${scenarios.length} scenarios`);
+let priorScenarios = [];
+try {
+  priorScenarios = JSON.parse(readFileSync(join(outDir, 'manifest.json'), 'utf8')).scenarios ?? [];
+} catch { /* first run */ }
 const manifest = {
   format: 'sb3.golden-manifest/1',
   generator: 'tools/golden/generate.mjs',
@@ -105,7 +119,7 @@ let total = 0, done = 0;
 for (const s of scenarios) {
   const rawFile = join(outDir, `${s.name}.sb3g`);
   const data = s.data ?? 'sonicbros3.bin';
-  const args = ['--start', 'level', '--no-build', '--data', data,
+  const args = ['--start', s.start ?? 'level', '--no-build', '--data', data,
     '--golden', rawFile, '--scenario', s.name, '--frames', String(s.frames ?? 1200),
     '--hash-every', '30', '--snapshot-every', '60'];
   if (s.level) args.push('--level', s.level);
@@ -130,5 +144,8 @@ for (const s of scenarios) {
   });
   if (++done % 25 === 0) console.log(`  ${done}/${scenarios.length}`);
 }
+const regenerated = new Set(manifest.scenarios.map(s => s.name));
+manifest.scenarios = [...priorScenarios.filter(s => !regenerated.has(s.name)), ...manifest.scenarios]
+  .sort((a, b) => a.name.localeCompare(b.name));
 writeFileSync(join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-console.log(`Wrote ${scenarios.length} traces, ${(total / 1024 / 1024).toFixed(2)} MiB, to ${outDir}`);
+console.log(`Wrote ${scenarios.length} traces, ${(total / 1024 / 1024).toFixed(2)} MiB; manifest now lists ${manifest.scenarios.length}.`);
