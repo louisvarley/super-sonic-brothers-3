@@ -31,14 +31,14 @@ target/
 
 # ---------------------------------------------------------------- derived data
 # Extracted ROM data, build caches and generated game archives.
-extracted/
-*.work/
-data.bin
-sonicbros3.bin
-web-data/
-web/runtime/
-trainer-runs/
-disasm/
+**/extracted/
+**/*.work/
+**/data.bin
+**/sonicbros3.bin
+**/web-data/
+**/web/runtime/
+**/trainer-runs/
+**/disasm/
 
 # ---------------------------------------------------------------- tooling
 node_modules/

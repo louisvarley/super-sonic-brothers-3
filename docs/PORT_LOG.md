@@ -45,3 +45,82 @@ traces for every level with several input scripts, commit hashes/state dumps und
 ## 2026-10-19 — Toolchain probe
 `dotnet 10.0.401` ✅ · `node v24.20.0` / `npm 11.19.0` ✅ · `git 2.55.0` ✅ · **`cargo`/`rustc` missing** ❌ ·
 **`docker` missing** ❌. Phase 2 needs a Rust toolchain; Phase 3's Docker verification needs Docker. → Q6.
+
+## 2026-10-19 — User answers + git baseline
+
+Answered: use https://github.com/louisvarley/super-sonic-brothers-3 (it was empty); **do not load ROMs at run time** —
+extract at build/first-run into `data.bin` (ZIP), then load that; use **stock Sonic 2 + stock SMB3**, `rom.bin` is an
+old artifact; port **everything** (frontend + audio); install **rustup only**; `data.bin`/`trainer-runs` may go.
+
+Done:
+* `git init -b main`, `origin` = the GitHub repo, baseline commit `Phase 0: inventory, port log, ROM guard, git baseline`
+  (227 files). **Pushed** `main` (empty repo → new branch).
+* `.gitignore` hardened (ROMs: `*.nes/smd/gen/32x/sms/gg/sfc/fig/swc/rom/bin/zip`; top-level `*.md` except
+  README/AGENTS; `extracted/`, `data.bin`, `sonicbros3.bin`, `web-data/`, `web/runtime/`, `trainer-runs/`).
+* `.github/workflows/ci.yml` `no-roms` job fails if any ROM/derived asset is tracked. Verified locally before commit:
+  0 tracked ROM/derived files.
+
+### Blocking conflict raised by the stock-ROM answer
+The current game's SMB3 campaign still depends on assets that exist **only in the modified Sonic 2 (`rom.bin`)**:
+* `zones/zone_40/collision.json` points at `collision/alternate.json` (the hack's collision set; SMB3 slopes/ramps
+  were mapped to its ids `$99/$9C/$9D/$9B/$9E/$9F`).
+* `plc/plc_lists.json` + `art/nemesis/*` supply object/HUD/ring art (Nemesis-compressed) used by the SMB3 zones.
+* `audio/smps68k/player.json` + bank tables are the 68k SMPS driver's constants/SFX; the converted SMB3 songs play
+  through that driver.
+* Green Hill (`$11/$12`) and Marble Zone (`$13/$14`) are hack-only; stock Sonic 2 has neither.
+* `palettes/pal_03.json` and Sonic/Tails/rings/HUD art are Sonic-2-derived and *can* be re-sourced from the stock
+  `.md`, but at different addresses.
+
+So "stock-only" and "reproduce the legacy traces tick-for-tick" cannot both hold for asset-dependent content. Raised
+as Q8/Q9/Q10 (below); awaiting the user's choice before Phase 1.
+
+### Recommendation
+Split the work: (1) port the engine + existing importer and prove tick-equivalence against a **pinned local archive**
+(`sonicbros3.bin`/`data.bin`, gitignored, never shipped) — this is the actual port; (2) then replace the importer with
+a stock-ROM importer and document the unavoidable asset deviations. This keeps "port, not redesign" honest and still
+delivers the stock pipeline the repo's README calls unfinished.
+
+## 2026-10-19 — Open questions after baseline
+* **Q8 asset strategy**: (A) two workstreams as recommended; (B) stock-only from day one (engine equivalence proven on
+  fixture bytes only; SMB3 slopes/audio differ); (C) keep hack assets (exact behaviour, contradicts stock request).
+* **Q9 Green Hill / Marble Zone**: drop from the stock build (they are reachable only via the currently-unused Sonic
+  level-select screen), or import Sonic 1 content for them?
+* **Q10 `data.bin` production**: auto-extract on first run when ROMs are found (as today), and/or an explicit
+  `extract` command? Release zips must not contain `data.bin`.
+
+## 2026-10-19 — Phase 1: deterministic legacy traces + Rust reader
+
+### Added to the legacy engine (additive; gameplay untouched)
+* `legacy/src/SonicBros3/Runtime/GoldenTrace.cs`: deterministic trace writer.
+* `legacy/src/SonicBros3/Program.cs`: `--golden`, `--scenario`, `--hash-every`, `--snapshot-every`,
+  `--zone`/`--act`, `--campaign-act`, `--world`, `--no-build`, `--list-campaign`.
+* `--golden` forces `chips = null` (no sound driver) so the recorded 64 KiB RAM is deterministic. `--screenshot` and
+  interactive runs are unchanged.
+* `tools/golden/generate.mjs`: scenario list + generator. `tools/golden/README.md` documents the flags.
+* `tests/golden/README.md`: trace format, scenario list, provenance, regeneration.
+
+### Trace format (`.sb3g`, gzipped in git)
+`"SB3GOLD1"` + JSON header + fixed 134-byte tick records + periodic JSON snapshots + end record. Per tick: phase,
+zone/act, camera, Sonic/Tails (12 fields each), rings/score/timer/lives/gameMode, a **whole-RAM hash**, six region
+hashes (`objects`, `level`, `camera`, `rings`, `sound`, `hud`) and an **RGBA framebuffer hash every 30 ticks**.
+Snapshots every 60 ticks carry the occupied object slots and the full RAM SHA-256.
+
+### Generated (core)
+* **52 traces**: SMB3 1-1/1-2/1-3 + Sonic `$00` acts 1–2, `$11` acts 1–2, `$12` act 1, `$13` acts 1–2, `$14` act 1;
+  `idle`, `right`, `jump`, `spindash`; plus 1-1 goal/death/pipe, 1-2 hill/goal/goomba-pipe/pipe, 1-3 goal.
+* **2.52 MiB gzipped** (10.98 MiB raw). Core levels: 1200 ticks; specials 500–2400.
+* Determinism verified: same scenario + same archive → identical SHA-256.
+* Framebuffer hashes: low 64 bits of SHA-256 over `Vdp.ToRgba` output at ticks 30, 60, ….
+* Campaign set generating every non-blocked area (`idle` + `right`, 420 ticks).
+
+### Rust side
+* Workspace `Cargo.toml`; `crates/golden-trace` (gzip + format parser + field-by-field comparator).
+* `cargo test -p golden-trace`: **2 passed** — every committed trace parses, matches its manifest SHA-256, has the
+  recorded tick count and hash cadence; the divergence reporter names `sonic.x`, `regions.objects`, `tickCount`.
+* Toolchain: Rust 1.99.1 installed (rustup, minimal). Docker still absent (Phase 3 verification pending).
+
+### Decisions recorded
+* The oracle is the **pinned derived archive** (`sonicbros3.bin` / campaign), not `rom.bin`. The port's shipped
+  stock-ROM importer is workstream 2; its output will differ in the documented ways (no Green Hill/Marble, substitute
+  collision/audio). This keeps the engine port provable while honouring the stock-ROM goal.
+* Audio is not in the bit-exact traces (floating-point chips). Separate non-bit-exact audio tests will follow.

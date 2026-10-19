@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/golden-trace",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/louisvarley/super-sonic-brothers-3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

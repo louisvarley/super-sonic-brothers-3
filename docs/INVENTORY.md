@@ -214,30 +214,30 @@ browser:        sonicbros3.bin + WASM(SonicBros3) ──► app.mjs
    ids without a `Smb3ObjectConverter.Rules` mapping are reported in `campaign/backlog.json`, and unported ids
    despawn via `MarkObjGone`. There are *also* genuine bugs to preserve (Q in §12).
 
-## 12. Open questions (please answer before Phase 1)
+## 12. Decisions (answered 2026-10-19)
 
-* **Q1 — git.** Should I `git init` and commit the current tree as the baseline? (Then I can create `legacy/`, add the
-  ROM `.gitignore` rules, and add the "no ROM tracked" CI check.)
-* **Q2 — ROMs.** Confirm the port needs the user's `rom.bin` (the hack) + `smb3.nes` at run time, and that the stock
-  `…(Rev A).md` is **not** required for gameplay (only the browser catalog uses it).
-* **Q3 — extraction scope.** For Phase 2.1, should `rom-assets` reproduce the **full** run-time build
-  (`Extractor` + 6502 + `Smb3ZoneBuilder` + `Smb3Conversion` + `Smb3Assets`/campaign) so the game takes raw ROMs, or
-  may it first consume an externally-built `sonicbros3.bin` (to lock behaviour) and gain run-time extraction later?
-  (Recommendation: full pipeline eventually; interim archive reading first, behind one `AssetSource` trait.)
-* **Q4 — trace granularity.** The framebuffer hash per K ticks: over the **RGBA** output (as `BrowserParityTests`
-  hashes today) or over the indexed `Frame`+palette? Per-tick state dump: which fields (I propose every byte of the
-  64 KiB RAM + camera + a per-slot entity list + the sound-driver RAM, i.e. hash the whole RAM).
-* **Q5 — frontend/audio scope.** Is the SMB3 frontend (title, world map, card minigame, level select) and both sound
-  drivers + YM2612/PSG/DAC **in scope** for the port? (I assume yes: they are part of "the engine behaves as today".)
-* **Q6 — toolchain.** Rust is not installed (`cargo`/`rustc` missing) and Docker is not installed. May I install
-  `rustup` (and, if needed, Docker) on this machine? Without Docker, Phase 3's `docker-compose` cannot be verified.
-* **Q7 — `data.bin`/`trainer-runs`.** Confirm these are stale/disposable (I found no code references).
+* **Git**: use `https://github.com/louisvarley/super-sonic-brothers-3` (was empty). Baseline committed and pushed;
+  `legacy/` now holds the old implementation.
+* **ROMs**: the shipped build must **not** read ROMs at run time. A build/first-run step extracts what it needs into
+  `data.bin` (ZIP); the game loads that. Target source: **stock Sonic 2** + **stock SMB3**; `rom.bin` is a leftover.
+* **Extraction model**: extract at build/first-run, then load `data.bin`.
+* **Scope**: port everything — engine, SMB3 frontend, both sound drivers, YM2612/PSG/DAC.
+* **Toolchain**: rustup installed; Docker intentionally skipped (Phase 3 Docker will be written but not verified here).
+* **Traces**: hash the RGBA framebuffer; `data.bin` and `trainer-runs/` are disposable.
+* **Asset strategy**: two workstreams. (1) Port the engine + existing importer and prove tick-equivalence against a
+  pinned local derived archive (never committed/shipped). (2) Replace the importer with a stock-ROM importer and
+  document unavoidable deviations (no Green Hill/Marble; substitute collision/audio).
+* **Green Hill / Marble**: dropped from the stock build (hack-only; only reachable from the unused Sonic
+  level-select screen).
+* **`data.bin` production**: auto-extract on first run when ROMs are beside the exe or passed by CLI, plus an explicit
+  extract command. Release zips contain no `data.bin`.
 
 ## 13. Proposed Rust workspace (approval wanted)
 
 ```
 Cargo.toml (workspace)
 crates/
+  golden-trace/    # test-support: reads .sb3g traces, reports the first divergent tick/field (done, Phase 1)
   engine-core/     # no I/O, no_std-friendly: Ram/Vars/objects, player, camera, collision, level systems,
                    # SMB3 screens, software VDP framebuffer, SMPS players + YM2612/PSG/DAC models.
                    # Assets enter through a plain data struct (no file access).
@@ -248,8 +248,9 @@ crates/
                    # (--trace/--screenshot/--inputs) used to generate golden traces.
   platform-web/    # cdylib: wasm-bindgen exports mirroring the Browser bridge.
 xtask/             # golden-trace generation, legacy harness invocation, ROM validation
-tests/             # cross-crate integration + golden trace replay (tests/golden/)
-legacy/            # the current Node+C# implementation, kept read-only as the oracle (once Q1 is settled)
+tools/golden/      # Phase 1 generator (done)
+tests/golden/      # committed .sb3g.gz traces + manifest + inputs (done)
+legacy/            # the current Node+C# implementation, kept as the oracle (moved; build/tests verified)
 docs/              # INVENTORY.md, PORT_LOG.md, KNOWN_ISSUES.md, plus the existing docs
 ```
 
