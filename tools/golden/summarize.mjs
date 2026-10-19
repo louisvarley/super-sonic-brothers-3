@@ -31,7 +31,7 @@ for (const file of files) {
     } else if (kind === 2) { p += 4; } else throw new Error(`bad kind ${kind} in ${file}`);
   }
   ticks += n;
-  if (!sawPlay) noPlay.push(file);
+  if (!sawPlay && !header.Scenario.startsWith('frontend-')) noPlay.push(file);
   const group = header.Scenario.startsWith('campaign-') ? 'campaign'
     : header.Scenario.startsWith('smb3-') ? 'smb3'
     : header.Scenario.startsWith('sonic-') ? 'sonic' : 'frontend';
