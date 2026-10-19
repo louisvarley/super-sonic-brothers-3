@@ -1,0 +1,46 @@
+# Build output
+**/bin/
+**/obj/
+bin/
+obj/
+target/
+.vs/
+.vscode/
+*.user
+
+# ---------------------------------------------------------------- ROMs
+# Never commit ROMs or ROM-derived assets. CI enforces this (see .github/workflows/ci.yml).
+*.nes
+*.smd
+*.gen
+*.32x
+*.sms
+*.gg
+*.sfc
+*.fig
+*.swc
+*.rom
+*.bin
+*.zip
+
+# A top-level Markdown file is treated as a potential Sonic 2 ROM (the stock ROM is a .md
+# binary). Only real documentation is allowed through.
+/*.md
+!/README.md
+!/AGENTS.md
+
+# ---------------------------------------------------------------- derived data
+# Extracted ROM data, build caches and generated game archives.
+extracted/
+*.work/
+data.bin
+sonicbros3.bin
+web-data/
+web/runtime/
+trainer-runs/
+disasm/
+
+# ---------------------------------------------------------------- tooling
+node_modules/
+coverage/
+.env

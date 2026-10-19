@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101a2d">
+  <title>Sonic Bros. 3</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <main>
+    <header><a href="/">SONIC <span>BROS. 3</span></a><span class="tag">ORIGINAL ENGINE / WEB EDITION</span></header>
+    <section class="cabinet" aria-label="Sonic Bros. 3 game">
+      <canvas id="game" width="320" height="224" tabindex="0" aria-label="Game screen. Arrow keys move, Z jumps, Down rolls, Down and Z charge a spindash."></canvas>
+      <div id="overlay">
+        <p class="eyebrow">SONIC &amp; TAILS IN THE MUSHROOM KINGDOM</p>
+        <h1>SONIC<br><span>BROS. 3</span></h1>
+        <p id="status" role="status">Loading the original game engine...</p>
+        <button id="play" disabled>START ADVENTURE</button>
+      </div>
+      <div id="error" role="alert" hidden></div>
+    </section>
+    <nav class="toolbar" aria-label="Game controls">
+      <button id="map">Restart at map</button>
+      <button id="pause">Pause</button>
+      <button id="sound" aria-pressed="false">Sound: off</button>
+      <button id="fullscreen">Fullscreen</button>
+    </nav>
+    <div id="stages" aria-label="Direct level selection"></div>
+    <section id="campaign" hidden aria-label="Campaign conversion browser">
+      <h2>Campaign conversion browser</h2>
+      <p>Experimental native areas: terrain is converted, but missing actors, exits and events are listed below. This is not yet a complete playable campaign.</p>
+      <div class="toolbar">
+        <label>World <select id="world"></select></label>
+        <label>Map screen <select id="map-screen"></select></label>
+        <button id="open-world">Open world map</button>
+      </div>
+      <div class="toolbar">
+        <label>Source area <select id="area"></select></label>
+        <button id="open-area">Test native area</button>
+      </div>
+      <p id="area-status" role="status"></p>
+    </section>
+    <section class="touch" aria-label="Touch controls">
+      <div><button data-key="4" aria-label="Move left">&#9664;</button><button data-key="1" aria-label="Move up">&#9650;</button><button data-key="2" aria-label="Duck or roll">&#9660;</button><button data-key="8" aria-label="Move right">&#9654;</button></div>
+      <div><button data-key="128">START</button><button class="jump" data-key="64">JUMP</button></div>
+    </section>
+    <section class="instructions">
+      <p><kbd>Enter</kbd> Start / enter stage &nbsp; Arrows Move &nbsp; <kbd>Z</kbd> / <kbd>Space</kbd> Jump &nbsp; <kbd>&darr;</kbd> Roll &nbsp; <kbd>&darr;</kbd> + <kbd>Z</kbd> Spindash &nbsp; <kbd>P</kbd> Pause</p>
+      <p>Stomp to remove wings or make shells. Roll through enemies for a one-hit defeat. Keyboard, touch and gamepads supported.</p>
+      <details><summary>Conversion status &amp; ROM sources</summary><div id="coverage"></div></details>
+    </section>
+    <footer>Original game running locally in your browser. Temporary asset source: your existing game archive. No ROMs or game assets are bundled. Keep this server private.</footer>
+  </main>
+</body>
+</html>

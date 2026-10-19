@@ -1,0 +1,15 @@
+{
+  "name": "sonic-bros-3",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node web/server.mjs",
+    "build": "node web/build.mjs",
+    "test": "node --test web/test/*.test.mjs",
+    "test:engine": "dotnet test tests/SonicBros3.Tests/SonicBros3.Tests.csproj --nologo",
+    "convert": "node web/convert.mjs",
+    "campaign": "dotnet run --project tools/ConvertSmb3 -- --campaign --base sonicbros3.bin --smb3 smb3.nes --output web-data/campaign.bin"
+  }
+}

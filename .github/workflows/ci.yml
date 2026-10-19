@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Hard rule: no ROMs or ROM-derived assets may ever be tracked.
+  no-roms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if a ROM or derived asset is tracked
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked="$(git ls-files)"
+          bad="$(printf '%s\n' "$tracked" | grep -Ei '\.(nes|smd|gen|32x|sms|gg|sfc|fig|swc|rom|bin|zip)$' || true)"
+          # A top-level *.md that is not a known document is a Sonic 2 ROM.
+          badmd="$(printf '%s\n' "$tracked" | grep -E '^[^/]+\.md$' | grep -Ev '^(README|AGENTS)\.md$' || true)"
+          # No extraction output or generated archives, wherever they appear.
+          derived="$(printf '%s\n' "$tracked" | grep -E '(^|/)(extracted|web-data|trainer-runs)/|(^|/)data\.bin$|(^|/)sonicbros3\.bin$' || true)"
+          if [ -n "$bad$badmd$derived" ]; then
+            echo "::error::ROMs or ROM-derived assets are tracked. Remove them from the index and working tree."
+            printf '%s\n' "$bad" "$badmd" "$derived" | sed '/^$/d'
+            exit 1
+          fi
+          echo "No ROMs or derived assets are tracked."

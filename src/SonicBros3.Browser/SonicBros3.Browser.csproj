@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SupportedOSPlatformVersion>1.0</SupportedOSPlatformVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmMainJSPath>main.mjs</WasmMainJSPath>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\SonicBros3\**\*.cs"
+             Exclude="..\SonicBros3\obj\**;..\SonicBros3\bin\**;..\SonicBros3\Program.cs;..\SonicBros3\S2Game.cs" />
+    <ProjectReference Include="..\S2Port.Extraction\S2Port.Extraction.csproj" />
+  </ItemGroup>
+</Project>

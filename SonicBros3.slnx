@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SonicBros3/SonicBros3.csproj" />
+    <Project Path="src/SonicBros3.Browser/SonicBros3.Browser.csproj" />
+    <Project Path="src/S2Port.Extraction/S2Port.Extraction.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SonicBros3.Tests/SonicBros3.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Extract/Extract.csproj" />
+    <Project Path="tools/ConvertSmb3/ConvertSmb3.csproj" />
+    <Project Path="tools/Validate/Validate.csproj" />
+  </Folder>
+</Solution>

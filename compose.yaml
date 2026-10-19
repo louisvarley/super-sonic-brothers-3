@@ -1,0 +1,40 @@
+services:
+  convert:
+    build:
+      context: .
+      target: campaign-converter
+    command: ["--campaign", "--base", "/roms/sonicbros3.bin", "--smb3", "/roms/smb3.nes", "--output", "/campaign/campaign.bin"]
+    volumes:
+      - type: bind
+        source: ${ROM_DIR:-.}
+        target: /roms
+        read_only: true
+      - campaign:/campaign
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+  game:
+    build: .
+    environment:
+      GAME_ARCHIVE: /campaign/campaign.bin
+    depends_on:
+      convert:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+    volumes:
+      - type: bind
+        source: ${ROM_DIR:-.}
+        target: /roms
+        read_only: true
+      - campaign:/campaign:ro
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+volumes:
+  campaign:
