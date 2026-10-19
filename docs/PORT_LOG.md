@@ -180,6 +180,23 @@ Oracle fixture `tests/golden/level-ram.json`: region hashes for 1-1/1-2/1-3 gene
 
 Next: M3 — player physics, collision probes, camera, rings, HUD, PLC queue, then the first divergence-free 1-1 replay.
 
+## 2026-10-20 — Phase 2 M3a: collision probes + isolated 1-1 traces (verified)
+
+* `engine-core::collision`: `find_tile`, `find_floor`/`find_floor2`, `ring_find_floor`, `find_wall`/`find_wall2`,
+  `select_layer`, paired `check_floor`/`check_ceiling`/`check_*_wall`, the single-distance probes, `calc_room_*` and
+  the Rev01 `rounded_quadrant`. Tests pin quadrant rounding (note `$3F` rounds to `$40`), the layout cell addressing
+  (a new cell row every 128 px, not every 16), and layer selection.
+* `rom-assets::load_collision_sets`: parses `collision/{normal,alternate}.json` (256 angles, 256x16 heights/widths);
+  test loads both from the local archive.
+* Added `--no-title-card` to the legacy raw-session path and four **title-card-free** 1-1 traces
+  (`smb3-1-1-playing-{idle,right,jump,spindash}`, 600 ticks each). These start at `Playing` on tick 1 so player/camera
+  physics can be compared before the title-card/PLC/HUD work.
+* `cargo test --workspace`: 17 (engine-core) + 2 (golden-trace) + 5 (rom-assets) passed; fmt/clippy clean.
+* Legacy build still green; the trace set is now 575 files.
+
+Next: port `Player` control/ground/roll/jump/air + camera scroll, then compare the four `playing-*` traces field by
+field (Sonic/camera first, Tails after `PlayerTails`).
+
 ## 2026-10-19 — Phase 2 plan (for approval)
 
 Two workstreams, per the owner's decision:

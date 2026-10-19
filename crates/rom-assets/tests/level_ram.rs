@@ -24,6 +24,23 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[test]
+fn collision_sets_load() {
+    let root = repo_root();
+    let archive_path = root.join("sonicbros3.bin");
+    if !archive_path.exists() {
+        eprintln!("skip: {} is not present", archive_path.display());
+        return;
+    }
+    let archive = Archive::open(&archive_path).expect("open sonicbros3.bin");
+    let sets = rom_assets::load_collision_sets(&archive).expect("collision sets");
+    assert_eq!(sets.normal.angles.len(), 256);
+    assert_eq!(sets.normal.heights.len(), 256 * 16);
+    assert_eq!(sets.normal.widths.len(), 256 * 16);
+    assert_eq!(sets.alternate.angles.len(), 256);
+    assert_ne!(sets.normal.name, sets.alternate.name);
+}
+
+#[test]
 fn level_data_matches_the_legacy_world() {
     let root = repo_root();
     let archive_path = root.join("sonicbros3.bin");

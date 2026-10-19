@@ -139,7 +139,7 @@ bool rawStart = start == GameFlow.Start.Level &&
 GameFlow? flow = null;
 LevelSession? rawSession = null;
 if (rawStart)
-    rawSession = new LevelSession(dataDir, startZone, startAct, debugStart, mixer, titleCards: true)
+    rawSession = new LevelSession(dataDir, startZone, startAct, debugStart, mixer, titleCards: !opts.ContainsKey("no-title-card"))
         { CampaignWorld = startWorld };
 else
     flow = new GameFlow(dataDir, mixer, start, debugStart, startZone, startAct, startWorld, startMapScreen);

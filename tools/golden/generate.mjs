@@ -41,6 +41,9 @@ const scripts = {
   goal12: '0 -\n201 R\n219 RA\n239 R\n',
   goal13: '0 -\n401 R\n441 RA\n449 R\n',
   title: '0 -\n101 S\n102 -\n103 S\n104 -\n',
+  right0: '0 R\n',
+  jump0: '0 R\n60 RC\n76 R\n130 RC\n146 R\n',
+  spindash0: '0 D\n10 DC\n16 D\n26 DC\n32 D\n38 D\n50 R\n',
 };
 for (const [name, body] of Object.entries(scripts)) writeFileSync(join(inputsDir, `${name}.txt`), body);
 
@@ -76,6 +79,10 @@ const SPECIAL = [
   { name: 'frontend-title-map', start: 'title', script: 'title', frames: 700 },
   { name: 'frontend-map', start: 'map', frames: 400 },
   { name: 'frontend-match', start: 'match', frames: 400 },
+  { name: 'smb3-1-1-playing-idle', zone: '40', act: 1, script: 'idle', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-1-playing-right', zone: '40', act: 1, script: 'right0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-1-playing-jump', zone: '40', act: 1, script: 'jump0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-1-playing-spindash', zone: '40', act: 1, script: 'spindash0', frames: 600, noTitleCard: true },
 ];
 
 const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
@@ -126,6 +133,7 @@ function traceArgs(s, rawFile) {
   if (zone) args.push('--zone', zone, '--act', String(s.act ?? 1));
   if (s.campaignAct) args.push('--campaign-act', String(s.campaignAct), '--world', String(s.world ?? 1));
   if (s.debug) args.push('--debug-start', s.debug);
+  if (s.noTitleCard) args.push('--no-title-card');
   const script = s.script ?? s.inputs;
   if (script) args.push('--inputs', join(inputsDir, `${script}.txt`));
   return args;
@@ -166,7 +174,7 @@ for (const s of scenarios) {
     level: s.level ?? null, zone: typeof s.zone === 'number' ? s.zone : s.zone ? parseInt(s.zone, 16) : null,
     act: s.act ?? null, world: s.world ?? null, campaignAct: s.campaignAct ?? null,
     debugStart: s.debug ?? null, inputs: s.script ?? null, frames: s.frames ?? 1200,
-    start: s.start ?? 'level', data: s.data ?? 'sonicbros3.bin',
+    start: s.start ?? 'level', data: s.data ?? 'sonicbros3.bin', noTitleCard: s.noTitleCard ?? false,
   });
   if (++done % 25 === 0) console.log(`  ${done}/${scenarios.length}`);
 }
