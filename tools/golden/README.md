@@ -31,6 +31,8 @@ The legacy CLI flags (added in `legacy/src/SonicBros3/Program.cs`, gameplay unch
 | `--debug-start X,Y` | level test start position (as the existing tests use) |
 | `--no-build` | never rebuild the asset archive; fail if missing |
 | `--list-campaign` | print the campaign areas as JSON (read-only) |
+| `--level-ram-hash` | print level-data RAM region hashes (milestone-2 oracle; read-only) |
+| `--dump-math` | print the exact sine/arctan tables (embedded in `engine-core`) |
 
 `--golden` forces `chips = null` (no sound driver) so RAM is deterministic and independent of floating-point chip
 models. Interactive runs and `--screenshot` are unchanged.

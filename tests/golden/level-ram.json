@@ -1,0 +1,41 @@
+[
+    {
+        "zone":  64,
+        "act":  1,
+        "whole":  "a8c8f3569e2a6e4e1f25a0cd5034e0e408150988964ed978fb952d6edba0663a",
+        "chunks":  "471610b3b95e588265081ec9e5fe169ab316c764781bb8f2659d23416892d4c5",
+        "layout":  "16d2c97281ad03d7c3e735310a77120c8d3772be3e041e4834d5a1518e872ff7",
+        "blocks":  "589c5e4f1935acfa26a226b0c68fc228947d77512ad4cddcc5fb72197b00f763",
+        "collision":  "4c3ed5023a5b8c65d2942e1e1f1269e752563bbc21fdeda1eeedccd935b4f64d",
+        "palette":  "a0a5ec529e32a18e06fa7adfaa7035f726e7120a4ba3cdede1d97abcb7b7ddaf",
+        "tiles":  2048,
+        "blockCount":  256,
+        "chunkCount":  65
+    },
+    {
+        "zone":  65,
+        "act":  1,
+        "whole":  "50df27b245d3b9304fb810c8ed9a75536c0d6a88cbca2975c240b5c2f8d6d42d",
+        "chunks":  "1e5fed83e19c02cf65772f99e1290e5a2224a66d9c357c9277cdab2f86d6dafb",
+        "layout":  "04e8bbd2529472d39020068afc9713d7f2106490b3a7046baefa703bb51c9e1c",
+        "blocks":  "b1359c7d7409f4e4304c0b01d1bee823a77f25eb4996667e804779f0b0a297d1",
+        "collision":  "3f7bbfa7ef9bacc27a6152d02e9ea33c915d438c0aebcc6ae49cb05363357ac2",
+        "palette":  "9e855597d829d9f9a6b5f53011d0a5264522bd2c3264512f2e1de6b477bcdd0c",
+        "tiles":  2048,
+        "blockCount":  256,
+        "chunkCount":  58
+    },
+    {
+        "zone":  66,
+        "act":  1,
+        "whole":  "88ffa568fe1ba55da4a73795d54458809a3dc3402f076476cc7b928c8fdbaa46",
+        "chunks":  "fa7ae9025944d6a9c533e662bfcfe16629619857f3ec0aa4d454b2a60181cef6",
+        "layout":  "a62061ca1f0f982b8f7e835f71240feda7733be7ea54e30cdbf417ac772f085f",
+        "blocks":  "0637beae390b0ba4446b07192e3a303000a890e487aaf9c0ff86700242f2536d",
+        "collision":  "330dfe79a076a5329b1eb9661dbe8887de6c26dab71a50f583e62f0a7f7320f6",
+        "palette":  "a0a5ec529e32a18e06fa7adfaa7035f726e7120a4ba3cdede1d97abcb7b7ddaf",
+        "tiles":  2048,
+        "blockCount":  256,
+        "chunkCount":  55
+    }
+]

@@ -5,6 +5,7 @@ using S2Port.Extraction.Graphics;
 using S2Port.Extraction.Smb3;
 using SonicBros3;
 using SonicBros3.Frontend;
+using SonicBros3.Logic;
 using SonicBros3.Runtime;
 using SonicBros3.Smb3;
 
@@ -33,6 +34,13 @@ string baseDir = DataPaths.BaseFolder();
 string dataDir = opts.GetValueOrDefault("data", Path.Combine(baseDir, "sonicbros3.bin"));
 string romPath = opts.GetValueOrDefault("rom", Path.Combine(baseDir, "rom.bin"));
 string nesPath = opts.GetValueOrDefault("smb3", Path.Combine(baseDir, "smb3.nes"));
+
+// Read-only dump of the generated MD math tables, for embedding in the Rust port (exact, no libm drift).
+if (opts.ContainsKey("dump-math"))
+{
+    Console.WriteLine(JsonSerializer.Serialize(new { sine = MdMath.Sine, arctan = MdMath.Arctan.Select(b => (int)b).ToArray() }));
+    return 0;
+}
 
 // Read-only listing for the golden-trace generator; must not trigger the archive build/rebuild.
 if (opts.ContainsKey("list-campaign"))
@@ -70,6 +78,30 @@ catch (Exception ex) when (ex is IOException or InvalidOperationException or Arg
 }
 
 bool headless = opts.ContainsKey("screenshot") || opts.ContainsKey("golden");
+
+// Read-only hash of the level-data regions RAM after World setup, for the Rust level-loader oracle.
+if (opts.ContainsKey("level-ram-hash"))
+{
+    int zone = opts.TryGetValue("zone", out var hashZoneText) ? Convert.ToInt32(hashZoneText, 16) : 0x40;
+    int act = opts.TryGetValue("act", out var hashActText) ? int.Parse(hashActText) : 1;
+    var session = new LevelSession(dataDir, zone, act, chips: null, titleCards: false);
+    var ram = session.World.Ram;
+    static string H(ReadOnlySpan<byte> b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        zone, act,
+        whole = H(ram.Bytes),
+        chunks = H(ram.Bytes.AsSpan(0x0000, 0x8000)),
+        layout = H(ram.Bytes.AsSpan(0x8000, 0x1000)),
+        blocks = H(ram.Bytes.AsSpan(0x9000, 0x1800)),
+        collision = H(ram.Bytes.AsSpan(0xD600, 0x600)),
+        palette = H(ram.Bytes.AsSpan(0xFB00, 0x80)),
+        tiles = session.Level.TileCount,
+        blockCount = session.Level.BlockCount,
+        chunkCount = session.Level.LoadedChunkCount,
+    }));
+    return 0;
+}
 
 // Golden traces run without a sound driver (as the existing frame-hash tests do) so the recorded RAM is deterministic
 // and independent of floating-point chip models. Audio is covered by separate tests.

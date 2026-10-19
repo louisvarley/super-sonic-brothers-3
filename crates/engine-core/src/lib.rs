@@ -1,0 +1,17 @@
+//! Deterministic Sonic Bros. 3 engine core.
+//!
+//! The legacy engine keeps all game state in a 64 KiB big-endian image of 68k work RAM and names fields by
+//! address. This crate mirrors that model: [`Ram`] owns the bytes, [`Obj`] is a named window onto one 64-byte
+//! object slot, and [`vars`] holds the addresses. There is no I/O, no wall clock and no randomness beyond the
+//! seeded/derived values the original uses.
+//!
+//! Port order: primitives (this milestone), then level loading, player/camera, objects, frontend, audio.
+
+pub mod math;
+pub mod math_tables;
+pub mod object;
+pub mod ram;
+pub mod vars;
+
+pub use object::Obj;
+pub use ram::{Ram, RAM_SIZE};

@@ -72,10 +72,24 @@ If the archive is rebuilt to different bytes, regenerate the traces and review t
 node tools/golden/generate.mjs            # core traces
 node tools/golden/generate.mjs --campaign # core + all campaign areas
 node tools/golden/generate.mjs --only smb3-1-1-idle --raw  # one scenario, uncompressed, for debugging
+node tools/golden/generate.mjs --verify   # re-run everything and compare to the manifest hashes
 ```
 
 Requires the legacy toolchain (`dotnet` 10) and the local archives. The generator builds the legacy engine, runs it
 headlessly, gzips the result and rewrites `manifest.json`.
+
+## Level-data oracle (`level-ram.json`)
+
+`level-ram.json` is the milestone-2 fixture: SHA-256 of the legacy `World`'s level-data RAM regions after setup
+(chunks, layout, blocks, collision, palette) for zones `$40`, `$41`, `$42`. It is generated read-only by:
+
+```sh
+dotnet run --project legacy/src/SonicBros3 -- --level-ram-hash --no-build --data sonicbros3.bin --zone 40 --act 1
+```
+
+`cargo test -p rom-assets` loads the same archive through the Rust `LevelData`/`fill_level_ram` and must reproduce
+every hash. (`whole` in the fixture includes players/objects/camera and is only compared after the full `World` port;
+`tiles` is the legacy composed-VRAM count, 2048, while this milestone loads level art only.)
 
 ## Verify from Rust
 

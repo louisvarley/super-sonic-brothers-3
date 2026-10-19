@@ -1,0 +1,18 @@
+[package]
+name = "rom-assets"
+description = "Stock-ROM extraction and derived-archive loading for Sonic Bros. 3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+png = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = "2"
+
+[dev-dependencies]
+sha2 = "0.10"

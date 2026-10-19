@@ -143,6 +143,43 @@ Snapshots every 60 ticks carry the occupied object slots and the full RAM SHA-25
 
 **Phase 1 is complete. No Rust engine code has been written yet.**
 
+## 2026-10-20 — Phase 2 M1: engine-core primitives (verified)
+
+New crate `crates/engine-core` (no dependencies, no I/O):
+* `Ram`: 64 KiB big-endian byte image; `u8/s8/u16/s16/u32/s32`, byte/word/long aliasing, `bset`/`bclr`, 16-bit
+  address wrap. Tests: big-endian aliasing, signed reads, wrap at `$FFFF`, bit ops, dump length.
+* `vars`: every address from the legacy `Vars.cs`, in `SCREAMING_SNAKE_CASE`; pinned by tests (slot layout, known
+  addresses).
+* `object::Obj`: named window on a 64-byte slot (all standard/player fields, status bits, object-specific
+  byte/word/long accessors, `slot_index`/`from_slot`, `clear`). Tests: offsets, `$2E` byte/word aliasing, status bits,
+  slot index.
+* `math`: the **exact** sine/arctan tables embedded (`--dump-math` exported them from the legacy engine), so no libm
+  drift. `calc_sine`/`calc_angle` ported with wrapping semantics.
+  * Quirk confirmed: `calc_angle(-1,-1)` is **`$A0`**, not `$E0` (the two negations are applied in sequence); test
+    pins it.
+
+`cargo test -p engine-core`: **14 passed**. `cargo fmt`/`clippy -D warnings` clean.
+
+## 2026-10-20 — Phase 2 M2: archive + level loader (verified)
+
+New crate `crates/rom-assets`:
+* `Archive`: reads the legacy derived ZIP (the engine's `sonicbros3.bin`/`data.bin`), forward-slash entry names,
+  `..` resolution, BOM-tolerant JSON.
+* `png::read_indexed` (8-bit indexed PNGs) + `tiles::from_sheet` (palette indices → raw 4bpp).
+* `level::LevelData::load`: tiles, blocks, chunks, layout, palettes, collision indexes, bounds/start, objects, rings,
+  gameplay/music metadata. Bit unpacking matches `LevelJson`.
+* `LevelData::fill_level_ram`: the level-data part of the legacy `World` setup (chunks `$0000`, layout `$8000`,
+  blocks `$9000`, collision `$D600/$D900`, palette `$FB00`, zone/act `$FE10`, hack flag `$FFE6`).
+* Legacy CLI additions (read-only): `--level-ram-hash` (region SHA-256), `--dump-math`.
+
+Oracle fixture `tests/golden/level-ram.json`: region hashes for 1-1/1-2/1-3 generated with `--level-ram-hash`.
+
+`cargo test -p rom-assets`: **4 passed**. The Rust loader reproduces the legacy chunks/layout/blocks/collision/palette
+**byte for byte** for zones `$40/$41/$42` (`whole` and composed-VRAM tile count wait for the full `World`/PLC port).
+`cargo test --workspace`: 14 + 2 + 4 passed; fmt/clippy clean.
+
+Next: M3 — player physics, collision probes, camera, rings, HUD, PLC queue, then the first divergence-free 1-1 replay.
+
 ## 2026-10-19 — Phase 2 plan (for approval)
 
 Two workstreams, per the owner's decision:
