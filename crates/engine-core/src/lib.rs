@@ -7,12 +7,19 @@
 //!
 //! Port order: primitives (this milestone), then level loading, player/camera, objects, frontend, audio.
 
+pub mod animation;
+pub mod camera;
 pub mod collision;
 pub mod math;
 pub mod math_tables;
 pub mod object;
+pub mod player;
 pub mod ram;
+pub mod session;
 pub mod vars;
+pub mod world;
 
 pub use object::Obj;
 pub use ram::{Ram, RAM_SIZE};
+pub use session::Session;
+pub use world::World;

@@ -194,6 +194,10 @@ dependencies = [
 [[package]]
 name = "engine-core"
 version = "0.1.0"
+dependencies = [
+ "golden-trace",
+ "rom-assets",
+]
 
 [[package]]
 name = "equivalent"

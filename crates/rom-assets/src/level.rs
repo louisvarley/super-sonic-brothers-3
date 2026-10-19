@@ -5,6 +5,7 @@
 
 use crate::archive::{change_extension, resolve, Archive};
 use crate::{png, tiles};
+pub use engine_core::world::{Bounds, Start};
 use engine_core::{vars, Ram};
 use serde_json::Value;
 
@@ -12,20 +13,6 @@ pub const LAYOUT_WIDTH: usize = 128;
 pub const LAYOUT_HEIGHT: usize = 16;
 pub const BLOCKS_PER_CHUNK_SIDE: usize = 8;
 pub const RING_SPACING: i32 = 0x18;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Bounds {
-    pub min_x: i32,
-    pub max_x: i32,
-    pub min_y: i32,
-    pub max_y: i32,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Start {
-    pub x: i32,
-    pub y: i32,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObjectPlacement {
@@ -275,6 +262,38 @@ impl LevelData {
             ram.w16(vars::NORMAL_PALETTE + (i as u16) * 2, *c);
         }
         ram.w8(vars::HACK_ZONE_FLAG, if zone >= 0x11 { 1 } else { 0 });
+    }
+}
+
+impl engine_core::world::LevelSource for LevelData {
+    fn fill_level_ram(&self, ram: &mut Ram, zone: u8, act: u8) {
+        LevelData::fill_level_ram(self, ram, zone, act);
+    }
+
+    fn bounds(&self) -> Bounds {
+        self.bounds
+    }
+
+    fn start(&self) -> Start {
+        self.start
+    }
+
+    fn water_map(&self) -> Option<engine_core::player::WaterMap> {
+        let gameplay = self.gameplay.as_ref()?;
+        let columns = gameplay["columns"].as_i64()? as i32;
+        let rows = gameplay["rows"].as_i64()? as i32;
+        let tileset = gameplay["tileset"].as_i64().unwrap_or(0) as i32;
+        let tiles = gameplay["tiles"]
+            .as_array()?
+            .iter()
+            .map(|t| t.as_u64().unwrap_or(0) as u8)
+            .collect();
+        Some(engine_core::player::WaterMap {
+            columns,
+            rows,
+            tileset,
+            tiles,
+        })
     }
 }
 

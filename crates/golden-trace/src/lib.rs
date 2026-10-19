@@ -272,47 +272,86 @@ impl Trace {
         })
     }
 
-    /// Compare two traces tick-by-tick and field-by-field, naming the first difference.
-    /// The legacy trace is `expected`; the port's trace is `actual`.
+    /// Full comparison (all fields, RAM, regions and screen); see [`compare_masked`] for subsets.
     pub fn compare(expected: &Trace, actual: &Trace) -> Option<Divergence> {
-        let n = expected.ticks.len().min(actual.ticks.len());
-        for i in 0..n {
-            let e = &expected.ticks[i];
-            let a = &actual.ticks[i];
-            macro_rules! check {
-                ($field:expr, $e:expr, $a:expr) => {
-                    if $e != $a {
-                        return Some(Divergence {
-                            tick: e.tick,
-                            field: $field.to_string(),
-                            expected: format!("{}", $e),
-                            actual: format!("{}", $a),
-                        });
-                    }
-                };
-            }
-            check!("tick", e.tick, a.tick);
-            check!("phase", e.phase, a.phase);
-            check!("zone", e.zone, a.zone);
-            check!("act", e.act, a.act);
-            check!("cameraX", e.camera_x, a.camera_x);
-            check!("cameraY", e.camera_y, a.camera_y);
-            check!("sonic.x", e.sonic.x, a.sonic.x);
-            check!("sonic.y", e.sonic.y, a.sonic.y);
-            check!("sonic.xv", e.sonic.x_vel, a.sonic.x_vel);
-            check!("sonic.yv", e.sonic.y_vel, a.sonic.y_vel);
-            check!("sonic.inertia", e.sonic.inertia, a.sonic.inertia);
-            check!("sonic.angle", e.sonic.angle, a.sonic.angle);
-            check!("sonic.status", e.sonic.status, a.sonic.status);
-            check!(
-                "sonic.status2",
-                e.sonic.status_secondary,
-                a.sonic.status_secondary
-            );
-            check!("sonic.routine", e.sonic.routine, a.sonic.routine);
-            check!("sonic.anim", e.sonic.anim, a.sonic.anim);
-            check!("sonic.frame", e.sonic.frame, a.sonic.frame);
-            check!("sonic.sub", e.sonic.subtype, a.sonic.subtype);
+        crate::compare(expected, actual)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompareMask {
+    /// Compare the whole 64 KiB RAM hash.
+    pub ram: bool,
+    /// Compare the six region hashes.
+    pub regions: bool,
+    /// Compare the periodic RGBA framebuffer hash.
+    pub screen: bool,
+    /// Compare Tails' fields.
+    pub tails: bool,
+}
+
+impl CompareMask {
+    pub const FULL: Self = Self {
+        ram: true,
+        regions: true,
+        screen: true,
+        tails: true,
+    };
+    /// Player/camera motion only; for the incremental player port before objects/HUD/PLC are in.
+    pub const MOTION: Self = Self {
+        ram: false,
+        regions: false,
+        screen: false,
+        tails: false,
+    };
+}
+
+/// Compare two traces tick-by-tick and field-by-field, naming the first difference.
+/// The legacy trace is `expected`; the port's trace is `actual`.
+pub fn compare(expected: &Trace, actual: &Trace) -> Option<Divergence> {
+    compare_masked(expected, actual, CompareMask::FULL)
+}
+
+pub fn compare_masked(expected: &Trace, actual: &Trace, mask: CompareMask) -> Option<Divergence> {
+    let n = expected.ticks.len().min(actual.ticks.len());
+    for i in 0..n {
+        let e = &expected.ticks[i];
+        let a = &actual.ticks[i];
+        macro_rules! check {
+            ($field:expr, $e:expr, $a:expr) => {
+                if $e != $a {
+                    return Some(Divergence {
+                        tick: e.tick,
+                        field: $field.to_string(),
+                        expected: format!("{}", $e),
+                        actual: format!("{}", $a),
+                    });
+                }
+            };
+        }
+        check!("tick", e.tick, a.tick);
+        check!("phase", e.phase, a.phase);
+        check!("zone", e.zone, a.zone);
+        check!("act", e.act, a.act);
+        check!("cameraX", e.camera_x, a.camera_x);
+        check!("cameraY", e.camera_y, a.camera_y);
+        check!("sonic.x", e.sonic.x, a.sonic.x);
+        check!("sonic.y", e.sonic.y, a.sonic.y);
+        check!("sonic.xv", e.sonic.x_vel, a.sonic.x_vel);
+        check!("sonic.yv", e.sonic.y_vel, a.sonic.y_vel);
+        check!("sonic.inertia", e.sonic.inertia, a.sonic.inertia);
+        check!("sonic.angle", e.sonic.angle, a.sonic.angle);
+        check!("sonic.status", e.sonic.status, a.sonic.status);
+        check!(
+            "sonic.status2",
+            e.sonic.status_secondary,
+            a.sonic.status_secondary
+        );
+        check!("sonic.routine", e.sonic.routine, a.sonic.routine);
+        check!("sonic.anim", e.sonic.anim, a.sonic.anim);
+        check!("sonic.frame", e.sonic.frame, a.sonic.frame);
+        check!("sonic.sub", e.sonic.subtype, a.sonic.subtype);
+        if mask.tails {
             check!("tails.x", e.tails.x, a.tails.x);
             check!("tails.y", e.tails.y, a.tails.y);
             check!("tails.xv", e.tails.x_vel, a.tails.x_vel);
@@ -329,12 +368,16 @@ impl Trace {
             check!("tails.anim", e.tails.anim, a.tails.anim);
             check!("tails.frame", e.tails.frame, a.tails.frame);
             check!("tails.sub", e.tails.subtype, a.tails.subtype);
-            check!("rings", e.rings, a.rings);
-            check!("score", e.score, a.score);
-            check!("timer", e.timer, a.timer);
-            check!("lives", e.lives, a.lives);
-            check!("gameMode", e.game_mode, a.game_mode);
+        }
+        check!("rings", e.rings, a.rings);
+        check!("score", e.score, a.score);
+        check!("timer", e.timer, a.timer);
+        check!("lives", e.lives, a.lives);
+        check!("gameMode", e.game_mode, a.game_mode);
+        if mask.ram {
             check!("wholeRam", e.whole_ram, a.whole_ram);
+        }
+        if mask.regions {
             for ((name, er), ar) in expected
                 .header
                 .regions
@@ -351,24 +394,26 @@ impl Trace {
                     });
                 }
             }
+        }
+        if mask.screen {
             check!("screenHash", e.screen_hash, a.screen_hash);
         }
-        if expected.ticks.len() != actual.ticks.len() {
-            let tick = expected
-                .ticks
-                .get(n)
-                .or_else(|| actual.ticks.get(n))
-                .map(|t| t.tick)
-                .unwrap_or(0);
-            return Some(Divergence {
-                tick,
-                field: "tickCount".into(),
-                expected: expected.ticks.len().to_string(),
-                actual: actual.ticks.len().to_string(),
-            });
-        }
-        None
     }
+    if expected.ticks.len() != actual.ticks.len() {
+        let tick = expected
+            .ticks
+            .get(n)
+            .or_else(|| actual.ticks.get(n))
+            .map(|t| t.tick)
+            .unwrap_or(0);
+        return Some(Divergence {
+            tick,
+            field: "tickCount".into(),
+            expected: expected.ticks.len().to_string(),
+            actual: actual.ticks.len().to_string(),
+        });
+    }
+    None
 }
 
 #[derive(Debug, Clone, Deserialize)]

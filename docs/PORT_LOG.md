@@ -197,6 +197,49 @@ Next: M3 — player physics, collision probes, camera, rings, HUD, PLC queue, th
 Next: port `Player` control/ground/roll/jump/air + camera scroll, then compare the four `playing-*` traces field by
 field (Sonic/camera first, Tails after `PlayerTails`).
 
+## 2026-10-20 — Phase 2 M3b: player physics + camera motion (verified; object contacts are the M4 frontier)
+
+New `engine-core` modules, ported routine for routine from `Player.cs` / `SonicAnimation.cs` / `Camera.cs`:
+* `player.rs`: `Obj01_Init/Control/Dead/Gone/Hurt`, `MdNormal`, `MdRoll`, `MdAir`, `Move`/`MoveLeft`/`MoveRight`,
+  `Skid`, `RollSpeed`/`Roll`/`RollLeft`/`RollRight`, `Jump`/`CheckSpindash`, `SlopeResist`/`RollRepel`/`SlopeRepel`,
+  `LevelBound`, `ObjectMove`/`ObjectMoveAndFall`, `JumpHeight`/`ChgJumpDir`/`JumpAngle`, `DoLevelCollision` and the
+  air responses, `ResetOnFloor`, `AnglePos`/`StickOrFall`/`PickAngle`, `RecordPos`, water. Side effects owned by later
+  milestones are explicit no-ops: sprites, DPLC/VRAM, sound, `TouchResponse`/`Solid`, the game-over object slots.
+* `animation.rs`: `Sonic_Animate` from the raw extracted block and the normal/super script tables (walk/run, roll,
+  push, flip, script commands), because the timers and the pushing bit feed physics and `anim`/`frame` are compared.
+* `camera.rs`: `ScrollHoriz`/`ScrollVerti` (including the signed `(short)` deltas, the $10 dead zone, the bias-driven
+  speeds, the 16.16 `Camera_Y_Pos` clamp/wrap and the `ror.l #8` diff), the scroll-flag toggles, the
+  `Camera_Max_Y` easing, and `SwScrlEasterEgg` (`$40-$43`: flat plane B, 256 scroll-buffer lines).
+* `world.rs`: `LevelSource` (implemented by `rom_assets::LevelData`), `LevelDataLoad` via `fill_level_ram`,
+  `LevelSizeLoad` (bounds, bias, start, camera), `InitPlayers` positioning, restart carry-over
+  (`$FE00-$FE5F`, `$FEB0-$FFFF`, timer/ring reset), `InitCameraValues`, `MainCharacter=1`, `GameMode=$0C`,
+  `LevelStartedFlag=1`, `ControlLocked=0`, normal speeds, `Primary/Secondary_Angle`, `Collision_addr`.
+  Stubs (documented): Tails, object manager, rings manager, HUD digits, PLCs, sprites, SMPS, title card.
+* `session.rs`: one `Playing` frame in `World.Step` order — pad held/pressed, `Level_frame_counter++`, `Sonic.Step`,
+  `DeformBgLayer`, `Vint_runcount++`, the HUD's level timer — plus the no-title-card restart (a death request rebuilds
+  the act from the previous RAM in the same tick, as `LevelSession.LoadNext` does).
+* `rom-assets`: `load_sonic_animation`; `LevelData` now implements `engine_core::world::LevelSource` (including the
+  SMB3 water map).
+
+Proof (`crates/engine-core/tests/player_motion.rs`, 600 ticks each, `CompareMask::MOTION`):
+* `idle`: every compared field matches to **tick 367**; tick 368 diverges at `sonic.yv` when a walking Goomba reaches
+  Sonic and `KillCharacter` fires (-1792 vs 0).
+* `right`: matches to **tick 78**; tick 79 diverges at `sonic.xv` on the same Goomba contact (0 vs 948).
+* `jump`: matches to **tick 85**; tick 86 diverges at `cameraX` when Sonic is pushed out of a solid SMB3 block's side
+  (`Solid.Side` zeroes `xv`/`inertia`).
+* `spindash`: **player + camera match for all 600 ticks**; the only MOTION divergence is `score` at tick 70 (a rolled-
+  into brick block breaks and awards points). This is the first full-trace player/camera equivalence.
+
+The four pinned divergences are all dynamic-object effects (M4: object manager, `Solid`, `TouchResponse`). The test
+pins them and prints the surrounding ticks; it must be tightened to a strict full-MOTION comparison when M4 lands.
+
+Tests: `cargo test --workspace` -> 39 engine-core unit tests (22 of them added here, pinning the wrapping/rounding/
+      clamp quirks above) + 1 `player_motion` + 2 (golden-trace) + 5 (rom-assets) passed. `cargo fmt --check` and
+      `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+Next: M4 objects — first the SMB3 block/goomba (`ObjectManager`, `Solid`, `TouchResponse`) to clear these four traces,
+then the remaining SMB3 and Sonic-zone objects.
+
 ## 2026-10-19 — Phase 2 plan (for approval)
 
 Two workstreams, per the owner's decision:
