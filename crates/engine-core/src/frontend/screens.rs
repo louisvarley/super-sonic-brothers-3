@@ -224,6 +224,7 @@ pub struct GameFlow {
     pub progress: MapProgress,
     pub screen: ScreenState,
     pub vdp: Vdp,
+    sound_effects: Vec<&'static str>,
 }
 #[allow(clippy::large_enum_variant)]
 pub enum ScreenState {
@@ -285,6 +286,7 @@ impl GameFlow {
             progress,
             screen,
             vdp: Vdp::new(),
+            sound_effects: Vec::new(),
         }
     }
 
@@ -296,6 +298,7 @@ impl GameFlow {
                 s.step(&self.assets, buttons);
                 match s.take_action() {
                     Some(TitleAction::StartGame) => {
+                        self.sound_effects.push("mario-coin");
                         self.progress = MapProgress::default();
                         self.screen = ScreenState::Map(MapScreen::with_campaign(
                             &self.assets,
@@ -336,10 +339,11 @@ impl GameFlow {
     }
 
     pub fn take_map_sound_effects(&mut self) -> Vec<&'static str> {
-        match &mut self.screen {
-            ScreenState::Map(s) => s.take_sound_effects(),
-            _ => Vec::new(),
+        let mut out = std::mem::take(&mut self.sound_effects);
+        if let ScreenState::Map(s) = &mut self.screen {
+            out.extend(s.take_sound_effects());
         }
+        out
     }
 
     pub fn set_world_screen(&mut self, world: u8, map_screen: usize) {

@@ -15,6 +15,18 @@ use rom_assets::{
 
 const CAMPAIGN_ZONE: u8 = 0x43;
 
+const ENTRY_FRAMES: u8 = 32;
+
+enum PendingLevel {
+    Area(u16),
+    Zone(u8, u8),
+}
+
+struct EntryTransition {
+    frames: u8,
+    pending: PendingLevel,
+}
+
 pub struct CampaignRunner {
     archive: Archive,
     pub campaign: CampaignData,
@@ -26,6 +38,7 @@ pub struct CampaignRunner {
     map_audio: Option<Box<AudioState>>,
     map_ram: Ram,
     map_music: u16,
+    entry: Option<EntryTransition>,
     pub ticks: u32,
     pub last_error: Option<String>,
 }
@@ -81,6 +94,7 @@ impl CampaignRunner {
             map_audio: None,
             map_ram: Ram::new(),
             map_music: 0x94,
+            entry: None,
             ticks: 0,
             last_error: None,
         };
@@ -150,6 +164,7 @@ impl CampaignRunner {
         self.seed_progress(&mut session);
         if let Ok(audio) = load_audio_assets_for_area(&self.archive, &area.directory) {
             session.enable_audio(audio);
+            session.play_effect("enter-level");
         }
         self.map_audio = None;
         self.session = Some(session);
@@ -172,6 +187,7 @@ impl CampaignRunner {
         self.seed_progress(&mut session);
         if let Ok(audio) = load_audio_assets_for_zone(&self.archive, zone, None) {
             session.enable_audio(audio);
+            session.play_effect("enter-level");
         }
         self.map_audio = None;
         self.session = Some(session);
@@ -182,6 +198,24 @@ impl CampaignRunner {
     /// One game frame. Map actions load a level; an exited level returns to the map.
     pub fn step(&mut self, buttons: u8) {
         self.ticks += 1;
+        if let Some(mut entry) = self.entry.take() {
+            if let Some(audio) = self.map_audio.as_mut() {
+                audio.update(&mut self.map_ram);
+            }
+            entry.frames += 1;
+            if entry.frames >= ENTRY_FRAMES {
+                let result = match entry.pending {
+                    PendingLevel::Area(act) => self.start_area(act),
+                    PendingLevel::Zone(zone, act) => self.start_zone(zone, act),
+                };
+                if let Err(e) = result {
+                    self.last_error = Some(e);
+                }
+            } else {
+                self.entry = Some(entry);
+            }
+            return;
+        }
         if let Some(session) = self.session.as_mut() {
             session.step(buttons).ok();
             if session.exited() {
@@ -203,13 +237,26 @@ impl CampaignRunner {
             }
         }
         let result = match action {
-            Some(MapAction::StartArea { act }) => self.start_area(act),
-            Some(MapAction::StartZone { zone, act }) => self.start_zone(zone, act),
+            Some(MapAction::StartArea { act }) => {
+                self.begin_entry(PendingLevel::Area(act));
+                Ok(())
+            }
+            Some(MapAction::StartZone { zone, act }) => {
+                self.begin_entry(PendingLevel::Zone(zone, act));
+                Ok(())
+            }
             Some(MapAction::StartMatch) | Some(MapAction::BackToMap { .. }) | None => Ok(()),
         };
         if let Err(e) = result {
             self.last_error = Some(e);
         }
+    }
+
+    fn begin_entry(&mut self, pending: PendingLevel) {
+        if let Some(audio) = self.map_audio.as_mut() {
+            audio.play_effect("enter-level");
+        }
+        self.entry = Some(EntryTransition { frames: 0, pending });
     }
 
     fn finish_level(&mut self) {
@@ -253,6 +300,11 @@ impl CampaignRunner {
     }
 
     pub fn render(&mut self) -> Vec<u8> {
+        if let Some(entry) = &self.entry {
+            let mut frame = self.flow.render_rgba();
+            draw_entry_border(&mut frame, entry.frames);
+            return frame;
+        }
         match self.session.as_mut() {
             Some(s) => s.render(),
             None => self.flow.render_rgba(),
@@ -286,6 +338,26 @@ impl CampaignRunner {
             p.lives,
             p.cards.len()
         )
+    }
+}
+
+fn draw_entry_border(rgba: &mut [u8], frames: u8) {
+    const WIDTH: usize = 320;
+    const HEIGHT: usize = 224;
+    let thickness = (frames as usize * 4).min(112);
+    if thickness == 0 {
+        return;
+    }
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            if x < thickness || x >= WIDTH - thickness || y < thickness || y >= HEIGHT - thickness {
+                let i = (y * WIDTH + x) * 4;
+                rgba[i] = 0;
+                rgba[i + 1] = 0;
+                rgba[i + 2] = 0;
+                rgba[i + 3] = 255;
+            }
+        }
     }
 }
 
@@ -349,6 +421,27 @@ mod tests {
         assert!(runner.session.is_none(), "the level exited");
         assert!(runner.flow.progress.lives > 0);
     }
+    #[test]
+    fn area_entry_draws_the_closing_border_then_loads() {
+        let Some(mut runner) = runner_with_start(Start::Map) else {
+            return;
+        };
+        runner.begin_entry(PendingLevel::Area(2));
+        for _ in 0..31 {
+            runner.step(0);
+            assert!(
+                runner.session.is_none(),
+                "the area must wait for the border"
+            );
+        }
+        let frame = runner.render();
+        assert_eq!(&frame[0..4], &[0, 0, 0, 255], "the border is black");
+        // At 31 frames the 112-pixel border covers the whole 320x224 frame.
+        assert!(frame.chunks_exact(4).all(|p| p == [0, 0, 0, 255]));
+        runner.step(0);
+        assert!(runner.session.is_some(), "the area loads after 32 frames");
+    }
+
     #[test]
     fn title_start_enters_the_world_map_after_start() {
         let Some(mut runner) = runner_with_start(Start::Title) else {

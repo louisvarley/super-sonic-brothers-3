@@ -629,6 +629,21 @@ Remaining: pipe entry and a few rare object events have no dedicated Mario PCM y
   non-silent, and that SFX requests leave the motion/framebuffer unchanged. All existing tests stay green.
 * The blocked subagent had already written this wiring before the provider cut its reply; verified and kept.
 
+## 2026-10-20 — User change batch 1: entry transition, title ding, SFX fixes
+
+* Map → level now runs a **32-frame closing black border** (the SMB3 entry effect) before loading; map input is frozen
+  and the `enter-level` PCM continues. The new level replays `enter-level` on its own audio state, so the sound is not
+  cut by dropping the map audio.
+* Title 1P Start queues `mario-coin` (the ding) through the map's PCM player.
+* Piranha-plant fireballs no longer queue `mario-fire` (removed the odd sound; the plant still fires).
+* Brick/block break uses the **Sonic Smash** SFX (`Sfx.Smash`, `$B9`) instead of a Mario crumble.
+* End-of-level cards already award lives exactly as SMB3: three alike rings=2, shields=3, invincibility=5, mixed=1;
+  the slots clear after the award.
+* Test: `area_entry_draws_the_closing_border_then_loads` pins the 32-frame border and delayed load.
+
+Remaining from the user's list: the Sonic item/card-game/menu conversion, 2-player Tails, and pipe enter/exit plus
+sprite clipping. These are the next batch.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

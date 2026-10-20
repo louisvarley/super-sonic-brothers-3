@@ -368,7 +368,7 @@ fn contents(ram: &mut Ram, o: Obj, player: Obj, monitor_item: u8) {
 }
 
 fn break_block(ram: &mut Ram, o: Obj) {
-    sfx::mario(ram, sfx::mario::CRUMBLE);
+    sfx::sonic(ram, sfx::ids::SMASH);
     crate::objects::touch::add_points(ram, 5);
     let index = o.respawn_index(ram);
     if index != 0 {
@@ -752,7 +752,6 @@ fn spit(ram: &mut Ram, o: Obj, sonic: Obj, direction: i32, height: i32) {
 pub fn fireball(ram: &mut Ram, o: Obj) {
     if o.routine(ram) == 0 {
         init(ram, o, 0xF08000, 0x6340, 4, 0x80 | 0x0B);
-        sfx::mario(ram, sfx::mario::FIRE);
     }
     move_object(ram, o);
     let t = tick(ram, o);
