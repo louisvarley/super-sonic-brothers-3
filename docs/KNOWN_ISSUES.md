@@ -60,6 +60,18 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **reproduction** | `cargo test -p engine-core --test frontend_screens -- --ignored --nocapture`; assertion unchanged. |
 | **status** | **Open.** `NesPpu`, `NesPresenter`, `StatusBar`, `MiniSonicArt`, `SpriteKit`, `Vdp::render_screen` and the map screen are implemented; title and match still need their remaining screen code/art composition. |
 
+
+## M6a 68k audio: exact against the legacy oracle (closed for SMB3 levels)
+
+| | |
+|---|---|
+| **id** | K6 |
+| **file/function** | `legacy/src/SonicBros3/Audio/{Smps68kDriver,Ym2612,Sn76489,SoundMixer}.cs`; port in `crates/engine-core/src/audio/` and `crates/rom-assets/src/audio.rs`. |
+| **state** | **Closed for the 68k path.** The driver is ported routine-for-routine, including queue/priority handling, coordination flags, tempo/fade/speed, SFX/special-SFX allocation, DAC requests and the 1-up save/restore. `Ym2612` and `Sn76489` are direct ports; `SoundMixer` renders 48 kHz stereo. `Session::enable_audio` sets `$FFE5`/`$FF90`, queues the act's music (`zones/zone_XX/music.json`, id $94/$95/$96 for 1-1/1-2/1-3), and runs `UpdateSound` after VBlank. Native output uses `cpal`; `--mute` disables it. |
+| **verification** | `audio_driver_parity` drives zone 1-1's $94 song for 600 VBlanks and matches the legacy C# driver byte-for-byte in RAM `$F000-$F2FF` and the FNV of every rendered sample stretch at frames 1/2/5/10/30/60/120/240/600/900/1200/1800/3000. `audio_smoke` verifies 1-1/1-2/1-3 are non-silent and audio does not change the framebuffer/camera/level counter. |
+| **reproduction** | `cargo test -p engine-core --test audio_driver_parity --test audio_smoke -- --nocapture`. |
+| **still open** | Sonic-zone Z80 (`legacy/src/SonicBros3/Audio/SmpsZ80Driver.cs`) is untouched; the front-end/title music also needs the Z80 path. Gameplay SFX requests are not wired to the driver yet. |
+
 ## Suspected, to confirm during Phase 1/2
 
 

@@ -550,6 +550,23 @@ The SMB3 goal traces must be generated with `--zone`/`--act` rather than `--leve
 
 Next: `platform-web` (WASM + canvas + ROM file picker), then audio, the stock importer and packaging.
 
+## 2026-10-20 - Phase 2 M6a: 68k SMPS audio (exact)
+
+### Implemented
+* `rom-assets::load_audio_assets` reads `audio/smps68k/player.json` (segments, frequency/voice tables, level music), `driver.json`'s WAV DAC samples, and `zones/zone_XX/music.json` extra SMB3 songs (music pointer table patched as the legacy `Smps68kData` does).
+* `engine-core::audio` now contains direct ports of `Ym2612`, `Sn76489`, `SoundMixer` and the 68k `Smps68kDriver`; driver state lives in the game RAM at `$F000`, and the mixer is I/O free (`render` = 800 stereo frames per tick at 48 kHz).
+* `Session::enable_audio` is opt-in. It sets the driver-select/LevelMusic bytes, queues the act's music and runs the driver in VBlank after `ProcessDPLC`; without it the RAM and render path are unchanged.
+* `platform-native` opens a `cpal` 48 kHz stereo output, feeds it one frame per 60 Hz tick from a bounded queue, and supports `--mute`.
+
+### Verification
+* C# oracle probe (same archive, queue byte and VBlanks): driver RAM `$F000-$F2FF` and 48 kHz sample hashes match at frames 1/2/5/10/30/60/120/240/600/900/1200/1800/3000. `audio_driver_parity` pins those hashes.
+* `audio_smoke`: 1-1/1-2/1-3 are non-silent and enabling audio leaves the framebuffer, camera and level counter identical.
+* `cargo test --workspace`, `cargo fmt --all`, and strict clippy are clean; headless native 1-1 still prints `hash=4f5de3aa5c2873f0`.
+* Quirk found while matching the oracle: `SoundMixer`'s scale is the C# `float` product `0.8f * 0.48f`, not an f64 product; using f64 changed sample rounding after several seconds.
+
+### Remaining
+* The Sonic-zone/title Z80 SMPS path is not ported. Gameplay SFX requests are also not yet routed to the 68k driver.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

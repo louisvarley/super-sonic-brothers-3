@@ -10,6 +10,7 @@
 pub mod animated_tiles;
 pub mod animation;
 pub mod assets;
+pub mod audio;
 pub mod background_plane;
 pub mod camera;
 pub mod collision;

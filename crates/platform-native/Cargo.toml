@@ -12,6 +12,7 @@ name = "sonic-bros-3"
 path = "src/main.rs"
 
 [dependencies]
+cpal = "0.18.2"
 engine-core = { path = "../engine-core" }
 minifb = "0.29.0"
 png = "0.18.1"

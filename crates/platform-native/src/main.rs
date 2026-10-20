@@ -3,12 +3,14 @@
 //! It loads the derived asset archive (the legacy `sonicbros3.bin` for now), starts a ported level directly (no title
 //! card), steps the deterministic engine at 60 Hz, and presents the software VDP framebuffer with `minifb`.
 //!
-//! Audio is not ported yet: the window is silent. The stock Sonic 2 + SMB3 importer is also not built yet, so this
-//! binary needs the derived archive (ROMs are not read).
+//! The 68k SMPS path plays through `cpal` at 48 kHz stereo; `--mute` keeps the window silent. The stock Sonic 2 +
+//! SMB3 importer is also not built yet, so this binary needs the derived archive (ROMs are not read).
+
+mod audio;
 
 use engine_core::session::Session;
 use minifb::{Key, Scale, Window, WindowOptions};
-use rom_assets::{Archive, LevelData};
+use rom_assets::{load_audio_assets_for_zone, Archive, LevelData};
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
@@ -23,6 +25,7 @@ struct Options {
     scale: Scale,
     frames: Option<u32>,
     screenshot: Option<PathBuf>,
+    mute: bool,
 }
 
 fn usage() -> ! {
@@ -34,7 +37,7 @@ fn usage() -> ! {
          \n\
          Default level: 1-1 (zone 0x40, act 1).\n\
          Controls: arrows move, Z/X/C or Space = A/B/C, Enter = Start, P = pause, Esc = quit.\n\
-         Audio is not ported yet; the window is silent."
+         Audio: 48 kHz stereo (68k SMPS); --mute disables it."
     );
     std::process::exit(2);
 }
@@ -46,6 +49,7 @@ fn parse_args() -> Options {
     let mut scale = Scale::X4;
     let mut frames = None;
     let mut screenshot = None;
+    let mut mute = false;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < args.len() {
@@ -99,6 +103,7 @@ fn parse_args() -> Options {
                 i += 1;
                 screenshot = Some(PathBuf::from(args.get(i).unwrap_or_else(|| usage())));
             }
+            "--mute" => mute = true,
             "-h" | "--help" => usage(),
             other => {
                 eprintln!("unknown option: {other}");
@@ -117,6 +122,7 @@ fn parse_args() -> Options {
         scale,
         frames,
         screenshot,
+        mute,
     }
 }
 
@@ -168,12 +174,23 @@ fn main() {
         }
     };
 
+    let music_file = level.music_file.clone();
     let mut session = match Session::new(Box::new(level), opts.zone, opts.act, sets, sonic, tails) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("world setup: {e}");
             std::process::exit(1);
         }
+    };
+
+    match load_audio_assets_for_zone(&archive, opts.zone, music_file.as_deref()) {
+        Ok(assets) => session.enable_audio(assets),
+        Err(e) => eprintln!("audio data: {e}; running silent"),
+    }
+    let mut audio = if session.audio.is_some() && !opts.mute && opts.frames.is_none() {
+        audio::AudioOutput::new()
+    } else {
+        None
     };
 
     if let Some(frames) = opts.frames {
@@ -241,6 +258,11 @@ fn main() {
                     eprintln!("session stopped: {e}");
                     reported_stop = true;
                 }
+            }
+            if let Some(output) = audio.as_mut() {
+                let mut samples = [0i16; 800 * 2];
+                session.render_audio(&mut samples, 800);
+                output.submit(&samples);
             }
         }
 

@@ -3,12 +3,14 @@
 //! manager, then the VBlank's `Vint_runcount` and level timer.
 //!
 //! Still no-ops (later milestones): the giant ring art stream, the PLC queue, oscillation, palette cycling, the
-//! signpost art, the HUD's VRAM digits, the sprite piece writer/VRAM and sound.
+//! signpost art, the HUD's VRAM digits, the sprite piece writer/VRAM and gameplay SFX. The optional 68k audio path
+//! runs the level music in the VBlank.
 //!
 //! A death requests a level restart (`$FE02`); as in `LevelSession` with title cards off, the act is rebuilt from the
 //! previous RAM in the same tick, keeping lives/score and the level-start variables.
 
 use crate::animation::{SonicAnimation, TailsAnimation};
+use crate::audio::{AudioAssets, AudioState};
 use crate::background_plane::BackgroundPlane;
 use crate::camera::Camera;
 use crate::collision::CollisionSets;
@@ -41,6 +43,7 @@ pub struct Session {
     tails_tails_dplc: u8,
     game_over_plc_loaded: bool,
     pub vdp: Vdp,
+    pub audio: Option<AudioState>,
     /// Frames stepped (the trace's `tick` before the current call).
     pub ticks: u32,
     /// The legacy `LevelSession.Stopped`: an unported path aborted the frame; later frames do nothing.
@@ -140,6 +143,7 @@ impl Session {
             tails_tails_dplc: 0xFF,
             game_over_plc_loaded: false,
             vdp: Vdp::new(),
+            audio: None,
             ticks: 0,
             stopped: None,
         })
@@ -245,6 +249,9 @@ impl Session {
             .w32(vars::VINT_RUNCOUNT, vint.wrapping_add(1));
         crate::hud::update(&mut self.world.ram, &mut self.vram, &self.graphics.hud)?;
         self.plc.process(&mut self.world.ram);
+        if let Some(a) = self.audio.as_mut() {
+            a.update(&mut self.world.ram);
+        }
 
         // LevelSession.StepPlaying: animated tiles and LoadTilesAsYouMove after World.Step.
         crate::animated_tiles::AnimatedTiles::step(
@@ -419,6 +426,48 @@ impl Session {
                     dest += count * 32;
                 }
             }
+        }
+    }
+
+    /// Enables the 68k SMPS path for the current hack zone.
+    ///
+    /// The extra SMB3 song loaded for this act wins over the zone music list, as in `World`'s constructor. Audio is
+    /// opt-in so existing traces (which never construct it) keep exactly the old RAM and framebuffer.
+    pub fn enable_audio(&mut self, assets: AudioAssets) {
+        self.enable_audio_with(assets, None);
+    }
+
+    /// Enables audio with an explicit music id, for the `$1801` special case and tests.
+    pub fn enable_audio_with(&mut self, assets: AudioAssets, music: Option<u16>) {
+        let id = music
+            .or(assets.extra_music)
+            .unwrap_or_else(|| assets.music_for_zone(self.zone as usize, false));
+        self.world.ram.w8(vars::SOUND_DRIVER_SELECT, 1);
+        let mut audio = AudioState::new(assets);
+        audio.start_music(&mut self.world.ram, id);
+        self.audio = Some(audio);
+    }
+
+    /// Queues a music id on the 68k path (no-op without audio).
+    pub fn play_music(&mut self, music: u16) {
+        if let Some(audio) = self.audio.as_mut() {
+            audio.play_music(&mut self.world.ram, music);
+        }
+    }
+
+    /// Queues an SFX id on the 68k path (no-op without audio).
+    pub fn play_sound(&mut self, sound: u16) {
+        if let Some(audio) = self.audio.as_mut() {
+            audio.play_sound(&mut self.world.ram, sound);
+        }
+    }
+
+    /// Renders one frame of 48 kHz stereo audio (800 frames) into `out` (interleaved L/R).
+    pub fn render_audio(&mut self, out: &mut [i16], frames: usize) {
+        if let Some(a) = self.audio.as_mut() {
+            a.render(out, frames);
+        } else {
+            out.fill(0);
         }
     }
 

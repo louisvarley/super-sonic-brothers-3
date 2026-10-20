@@ -121,7 +121,8 @@ impl World {
         if let Some(prev) = previous {
             ram.bytes_mut()[0xFE00..0xFE60].copy_from_slice(&prev.bytes()[0xFE00..0xFE60]);
             ram.bytes_mut()[0xFEB0..0x10000].copy_from_slice(&prev.bytes()[0xFEB0..0x10000]);
-            // The 68k SMPS driver's RAM ($F000-$F5C0) is copied too, but sound is a later milestone.
+            // The 68k SMPS driver keeps playing across a restart (World.cs copies $F000-$F5BF).
+            ram.bytes_mut()[0xF000..0xF5C0].copy_from_slice(&prev.bytes()[0xF000..0xF5C0]);
             // Level init (0x4FFC) without a checkpoint: rings, time and the extra-life flags reset.
             if ram.u8(vars::LAST_STAR_POLE_HIT) == 0 {
                 ram.w16(vars::RING_COUNT, 0);
