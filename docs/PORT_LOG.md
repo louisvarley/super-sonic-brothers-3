@@ -660,8 +660,9 @@ sprite clipping. These are the next batch.
   returns to CPU following when idle. The world map draws a second mini Tails beside mini Sonic in 2P mode.
 * **Pipes**: `Smb3Gameplay` is parsed into `world::Gameplay`, and `Session::StepPipe` is ported: mouth detection,
   pipe SFX, local transit paths, exit-mouth placement, alternate/bonus/common-exit seamless area loads (rings, timer,
-  score, lives, shield/invincibility object slots, shoes and invulnerability carried), map-pipe return, and a
-  sprite clip rectangle so a player disappears into a pipe instead of drawing over its rim.
+  score, lives, shield/invincibility object slots, shoes and invulnerability carried), map-pipe return (including the
+  paired far-end pipeway destination), and a sprite clip rectangle so a player disappears into a pipe instead of
+  drawing over its rim.
 * The card backs are the gold ring redraw (not the N-Spade), and the card-game status bar gets the same [S] badge as the map.
 * `--match` boots straight into the card game (with map music) for testing; `--two-player` forces the 2P map/level flag; `--list-campaign` is unchanged.
 * Tests: `session::tests::a_local_pipe_carries_the_players_and_returns_control`,

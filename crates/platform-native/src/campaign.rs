@@ -233,16 +233,51 @@ impl CampaignRunner {
         let mut p = self.flow.progress.clone();
         p.lives = session.world.ram.u8(vars::LIFE_COUNT) as i32;
         p.score = ((session.world.ram.u32(vars::SCORE) as i64) * 10).min(9_999_990) as i32;
+        let source = self
+            .current_act
+            .and_then(|act| self.campaign.area_for_act(act).cloned());
         if exit.kind == "map" {
             p.rings = (p.rings + session.world.ram.u16(vars::RING_COUNT) as i32).min(99);
+            if exit.far {
+                if let Some(source) = source.as_ref() {
+                    if let Some(world) = self
+                        .campaign
+                        .worlds
+                        .iter()
+                        .find(|w| w.number == p.world as u8)
+                    {
+                        let destinations: Vec<_> = world
+                            .entries
+                            .iter()
+                            .filter(|e| {
+                                e.area_id.as_ref().is_some_and(|id| {
+                                    self.campaign
+                                        .areas
+                                        .iter()
+                                        .find(|a| &a.source.id == id)
+                                        .is_some_and(|a| {
+                                            a.source.object_address == source.source.object_address
+                                        })
+                                })
+                            })
+                            .filter(|e| {
+                                e.screen != p.map_screen as usize
+                                    || e.row * 16 + e.column != p.position
+                            })
+                            .collect();
+                        if let [destination] = destinations.as_slice() {
+                            p.map_screen = destination.screen as i32;
+                            p.position = destination.row * 16 + destination.column;
+                            p.last_move = 0;
+                        }
+                    }
+                }
+            }
             self.flow.set_progress_map(p, false);
             self.start_map_audio(self.flow.progress.world as u8);
             return;
         }
-        let Some(current_act) = self.current_act else {
-            return;
-        };
-        let Some(source) = self.campaign.area_for_act(current_act).cloned() else {
+        let Some(source) = source else {
             return;
         };
         let Some(target) = self.pipe_target(&exit.kind, &source) else {
