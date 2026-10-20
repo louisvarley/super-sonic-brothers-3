@@ -242,6 +242,7 @@ fn touch_enemy(ram: &mut Ram, o: Obj, en: Obj) -> i32 {
             if en.collision_property(ram) == 0 {
                 en.set_status(ram, en.status(ram) | 0x80);
             }
+            sfx::mario(ram, sfx::mario::KICK);
             return 0;
         }
     }
@@ -283,6 +284,7 @@ fn touch_enemy(ram: &mut Ram, o: Obj, en: Obj) -> i32 {
     en.set_id(ram, EXPLOSION_ID);
     en.set_routine(ram, 0);
     if native_enemy {
+        sfx::mario(ram, sfx::mario::KICK);
         en.set_collision_flags(ram, 0);
         if stomp {
             o.set_y_vel(ram, -(o.y_vel(ram) as i32).max(0x400) as i16);

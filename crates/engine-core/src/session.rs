@@ -52,6 +52,8 @@ pub struct Session {
     pub exit_on_restart: bool,
     pub exited: bool,
     pub goal_card: Option<i32>,
+    /// 2P turns: 0 = Sonic, 1 = Tails (Tails uses the main-character slot and Tails physics).
+    active_player: u8,
     gameplay: Option<Gameplay>,
     pipe: Option<PipeTravel>,
     pipe_exit_direction: i32,
@@ -178,6 +180,7 @@ impl Session {
             exit_on_restart: false,
             exited: false,
             goal_card: None,
+            active_player: 0,
             gameplay,
             pipe: None,
             pipe_exit_direction: 0,
@@ -192,6 +195,34 @@ impl Session {
     /// Campaign mode: a death/goal ends the session with `exited`, for map return.
     pub fn set_exit_on_restart(&mut self, exit: bool) {
         self.exit_on_restart = exit;
+    }
+
+    /// Enables the campaign's user-requested item/behaviour changes; golden traces keep the legacy oracle.
+    pub fn set_user_changes(&mut self, enabled: bool) {
+        self.world.objects.user_changes = enabled;
+    }
+
+    /// Makes Sonic (0) or Tails (1) the active 2P character. Tails occupies the main slot so the camera, rings
+    /// and object collisions keep using the main player; only the sprite, physics profile and input source change.
+    pub fn set_active_player(&mut self, player: u8) {
+        self.active_player = player.min(1);
+        let ram = &mut self.world.ram;
+        if self.active_player == 1 {
+            self.world.sonic.profile = crate::player::PlayerProfile::TAILS_MAIN;
+            ram.w16(vars::PLAYER_MODE, 3);
+            ram.w8(vars::SIDEKICK, 0);
+            Obj::new(vars::TAILS_TAILS).set_id(ram, 0);
+            self.world.sonic.obj.set_routine(ram, 0);
+        } else {
+            self.world.sonic.profile = crate::player::PlayerProfile::SONIC;
+            ram.w16(vars::PLAYER_MODE, 0);
+            ram.w8(vars::SIDEKICK, 2);
+            self.world.sonic.obj.set_routine(ram, 0);
+        }
+    }
+
+    pub fn active_player(&self) -> u8 {
+        self.active_player
     }
 
     pub fn exited(&self) -> bool {
@@ -495,11 +526,18 @@ impl Session {
         let previous = self.world.ram.u8(vars::CTRL1_HELD);
         self.world.ram.w8(vars::CTRL1_HELD, buttons);
         self.world.ram.w8(vars::CTRL1_PRESS, buttons & !previous);
+        // On Tails' 2P turn the main slot carries Tails; `Obj02_Control` reads the player-2 pad. Feed it the
+        // active player's buttons so either keyboard can drive the turn.
+        let active_buttons = if self.active_player == 1 {
+            buttons | buttons_p2
+        } else {
+            0
+        };
         let previous2 = self.world.ram.u8(vars::CTRL2_HELD);
-        self.world.ram.w8(vars::CTRL2_HELD, buttons_p2);
+        self.world.ram.w8(vars::CTRL2_HELD, active_buttons);
         self.world
             .ram
-            .w8(vars::CTRL2_PRESS, buttons_p2 & !previous2);
+            .w8(vars::CTRL2_PRESS, active_buttons & !previous2);
         let counter = self.world.ram.u16(vars::LEVEL_FRAME_COUNTER);
         self.world
             .ram
@@ -510,12 +548,14 @@ impl Session {
             && self.world.sonic.obj.routine(&self.world.ram) >= crate::player::routine::DEAD;
         if self.world.ram.u8(vars::MAIN_CHARACTER) != 0 {
             let water = self.world.water.as_ref();
-            self.world.sonic.step(
-                &mut self.world.ram,
-                &self.sets,
-                &self.sonic_animation,
-                water,
-            )?;
+            let animation: &dyn crate::animation::PlayerAnimation = if self.active_player == 1 {
+                &self.tails_animation
+            } else {
+                &self.sonic_animation
+            };
+            self.world
+                .sonic
+                .step(&mut self.world.ram, &self.sets, animation, water)?;
         }
         if self.world.ram.u8(vars::SIDEKICK) == 2 {
             let water = self.world.water.as_ref();
@@ -617,6 +657,7 @@ impl Session {
         let previous = std::mem::take(&mut self.world.ram);
         self.world = World::new(self.level.as_ref(), self.zone, self.act, Some(previous))?;
         self.world.objects.tails_animation = Some(self.tails_animation.clone());
+        self.set_active_player(self.active_player);
         self.world.objects.dust_sprites = self.graphics.bank.table(0x21DDE).cloned();
         if let Some(d) = self.graphics.bank.table(0x15C7A) {
             self.world.objects.monitor_animations = d.animations.clone();
@@ -669,25 +710,41 @@ impl Session {
 
     /// LoadSonicDynPLC / LoadTailsDynPLC: copy the current mapping frame's tiles into VRAM.
     fn update_player_vram(&mut self) {
-        let sonic = self.world.sonic.obj;
-        let frame = sonic.mapping_frame(&self.world.ram);
-        if frame != self.sonic_dplc {
-            self.sonic_dplc = frame;
-            self.world.ram.w8(vars::SONIC_LAST_LOADED_DPLC, frame);
-            if let Some(dplc) = self.graphics.sonic.dplc.as_ref() {
+        let active_tails = self.active_player == 1;
+        let player = self.world.sonic.obj;
+        let frame = player.mapping_frame(&self.world.ram);
+        let (art, last, cached) = if active_tails {
+            (
+                &self.graphics.tails,
+                vars::TAILS_LAST_LOADED_DPLC,
+                &mut self.tails_dplc,
+            )
+        } else {
+            (
+                &self.graphics.sonic,
+                vars::SONIC_LAST_LOADED_DPLC,
+                &mut self.sonic_dplc,
+            )
+        };
+        if frame != *cached {
+            *cached = frame;
+            self.world.ram.w8(last, frame);
+            if let Some(dplc) = art.dplc.as_ref() {
                 if let Some(entries) = dplc.get(frame as usize) {
                     let mut dest = 0xF000usize;
                     for &(first, count) in entries {
                         let src = first * 32;
-                        let n = (count * 32).min(self.graphics.sonic.art.len().saturating_sub(src));
+                        let n = (count * 32).min(art.art.len().saturating_sub(src));
                         if dest + n <= self.vram.len() {
-                            self.vram[dest..dest + n]
-                                .copy_from_slice(&self.graphics.sonic.art[src..src + n]);
+                            self.vram[dest..dest + n].copy_from_slice(&art.art[src..src + n]);
                         }
                         dest += count * 32;
                     }
                 }
             }
+        }
+        if active_tails {
+            return;
         }
         let tails = self.world.tails.obj;
         let frame = tails.mapping_frame(&self.world.ram);

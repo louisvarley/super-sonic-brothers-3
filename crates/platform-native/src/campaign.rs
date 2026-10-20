@@ -16,18 +16,6 @@ use rom_assets::{
 
 const CAMPAIGN_ZONE: u8 = 0x43;
 
-const ENTRY_FRAMES: u8 = 32;
-
-enum PendingLevel {
-    Area(u16),
-    Zone(u8, u8),
-}
-
-struct EntryTransition {
-    frames: u8,
-    pending: PendingLevel,
-}
-
 pub struct CampaignRunner {
     archive: Archive,
     pub campaign: CampaignData,
@@ -39,7 +27,6 @@ pub struct CampaignRunner {
     map_audio: Option<Box<AudioState>>,
     map_ram: Ram,
     map_music: u16,
-    entry: Option<EntryTransition>,
     current_act: Option<u16>,
     force_two_player: bool,
     pub ticks: u32,
@@ -97,7 +84,6 @@ impl CampaignRunner {
             map_audio: None,
             map_ram: Ram::new(),
             map_music: 0x94,
-            entry: None,
             current_act: None,
             force_two_player: false,
             ticks: 0,
@@ -110,10 +96,29 @@ impl CampaignRunner {
     }
 
     /// `--two-player`: keep Tails as player 2 across title/map/level changes.
+    /// `--tails-turn`: start 2P on Tails' go (for demonstration/testing).
+    pub fn set_current_player(&mut self, player: u8) {
+        self.flow.progress.two_player = true;
+        self.flow.progress.current_player = player.min(1);
+        self.flow.progress.lives = if self.flow.progress.current_player == 1 {
+            self.flow.progress.lives_p2
+        } else {
+            self.flow.progress.lives_p1
+        };
+        if matches!(self.flow.screen, ScreenState::Map(_)) {
+            self.flow
+                .set_progress_map(self.flow.progress.clone(), false);
+        }
+    }
+
     pub fn set_two_player(&mut self, enabled: bool) {
         self.force_two_player = enabled;
         if enabled {
             self.flow.progress.two_player = true;
+            self.flow.progress.current_player = 0;
+            self.flow.progress.lives_p1 = self.flow.progress.lives_p1.max(1);
+            self.flow.progress.lives_p2 = self.flow.progress.lives_p2.max(1);
+            self.flow.progress.lives = self.flow.progress.lives_p1;
             if matches!(self.flow.screen, ScreenState::Map(_)) {
                 self.flow
                     .set_progress_map(self.flow.progress.clone(), false);
@@ -170,6 +175,8 @@ impl CampaignRunner {
             }
         }
         self.flow.progress.power_ups.clear();
+        let active = self.flow.progress.current_player;
+        session.set_active_player(active);
     }
 
     fn start_area(&mut self, act: u16) -> Result<(), String> {
@@ -190,6 +197,7 @@ impl CampaignRunner {
         )
         .map_err(|e| format!("area {}: {e}", area.act))?;
         session.set_exit_on_restart(true);
+        session.set_user_changes(true);
         self.seed_progress(&mut session);
         if let Ok(audio) = load_audio_assets_for_area(&self.archive, &area.directory) {
             session.enable_audio(audio);
@@ -214,6 +222,7 @@ impl CampaignRunner {
         )
         .map_err(|e| format!("zone ${zone:02X} act {act}: {e}"))?;
         session.set_exit_on_restart(true);
+        session.set_user_changes(true);
         self.seed_progress(&mut session);
         if let Ok(audio) = load_audio_assets_for_zone(&self.archive, zone, None) {
             session.enable_audio(audio);
@@ -360,6 +369,7 @@ impl CampaignRunner {
         )
         .map_err(|e| format!("pipe area {}: {e}", area.act))?;
         session.set_exit_on_restart(true);
+        session.set_user_changes(true);
         self.seed_progress(&mut session);
         {
             let ram = &mut session.world.ram;
@@ -414,24 +424,6 @@ impl CampaignRunner {
     /// One game frame with Tails' pad. In 1-player mode player 2 is ignored.
     pub fn step_p2(&mut self, buttons: u8, buttons_p2: u8) {
         self.ticks += 1;
-        if let Some(mut entry) = self.entry.take() {
-            if let Some(audio) = self.map_audio.as_mut() {
-                audio.update(&mut self.map_ram);
-            }
-            entry.frames += 1;
-            if entry.frames >= ENTRY_FRAMES {
-                let result = match entry.pending {
-                    PendingLevel::Area(act) => self.start_area(act),
-                    PendingLevel::Zone(zone, act) => self.start_zone(zone, act),
-                };
-                if let Err(e) = result {
-                    self.last_error = Some(e);
-                }
-            } else {
-                self.entry = Some(entry);
-            }
-            return;
-        }
         if let Some(session) = self.session.as_mut() {
             let p2 = if self.flow.progress.two_player {
                 buttons_p2
@@ -451,7 +443,13 @@ impl CampaignRunner {
         if let Some(audio) = self.map_audio.as_mut() {
             audio.update(&mut self.map_ram);
         }
-        let action = self.flow.step(buttons);
+        let map_buttons = if self.flow.progress.two_player && self.flow.progress.current_player == 1
+        {
+            buttons | buttons_p2
+        } else {
+            buttons
+        };
+        let action = self.flow.step(map_buttons);
         if self.force_two_player
             && matches!(self.flow.screen, ScreenState::Map(_))
             && !self.flow.progress.two_player
@@ -478,26 +476,13 @@ impl CampaignRunner {
             }
         }
         let result = match action {
-            Some(MapAction::StartArea { act }) => {
-                self.begin_entry(PendingLevel::Area(act));
-                Ok(())
-            }
-            Some(MapAction::StartZone { zone, act }) => {
-                self.begin_entry(PendingLevel::Zone(zone, act));
-                Ok(())
-            }
+            Some(MapAction::StartArea { act }) => self.start_area(act),
+            Some(MapAction::StartZone { zone, act }) => self.start_zone(zone, act),
             Some(MapAction::StartMatch) | Some(MapAction::BackToMap { .. }) | None => Ok(()),
         };
         if let Err(e) = result {
             self.last_error = Some(e);
         }
-    }
-
-    fn begin_entry(&mut self, pending: PendingLevel) {
-        if let Some(audio) = self.map_audio.as_mut() {
-            audio.play_effect("map-move");
-        }
-        self.entry = Some(EntryTransition { frames: 0, pending });
     }
 
     fn finish_level(&mut self) {
@@ -532,6 +517,22 @@ impl CampaignRunner {
                 p.cards.clear();
             }
         }
+        if p.two_player {
+            if p.current_player == 1 {
+                p.lives_p2 = p.lives;
+            } else {
+                p.lives_p1 = p.lives;
+            }
+            let next = 1 - p.current_player;
+            let next_lives = if next == 0 { p.lives_p1 } else { p.lives_p2 };
+            if next_lives > 0 {
+                p.current_player = next;
+                p.lives = next_lives;
+            } else if p.lives <= 0 {
+                // Both stocks are gone: a new adventure.
+                p = MapProgress::default();
+            }
+        }
         if p.lives <= 0 {
             // A new adventure rather than the still-placeholder title screen (K5).
             p = MapProgress::default();
@@ -541,11 +542,6 @@ impl CampaignRunner {
     }
 
     pub fn render(&mut self) -> Vec<u8> {
-        if let Some(entry) = &self.entry {
-            let mut frame = self.flow.render_rgba();
-            draw_entry_border(&mut frame, entry.frames);
-            return frame;
-        }
         match self.session.as_mut() {
             Some(s) => s.render(),
             None => self.flow.render_rgba(),
@@ -579,26 +575,6 @@ impl CampaignRunner {
             p.lives,
             p.cards.len()
         )
-    }
-}
-
-fn draw_entry_border(rgba: &mut [u8], frames: u8) {
-    const WIDTH: usize = 320;
-    const HEIGHT: usize = 224;
-    let thickness = (frames as usize * 4).min(112);
-    if thickness == 0 {
-        return;
-    }
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            if x < thickness || x >= WIDTH - thickness || y < thickness || y >= HEIGHT - thickness {
-                let i = (y * WIDTH + x) * 4;
-                rgba[i] = 0;
-                rgba[i + 1] = 0;
-                rgba[i + 2] = 0;
-                rgba[i + 3] = 255;
-            }
-        }
     }
 }
 
@@ -663,24 +639,39 @@ mod tests {
         assert!(runner.flow.progress.lives > 0);
     }
     #[test]
-    fn area_entry_draws_the_closing_border_then_loads() {
+    fn two_player_turns_switch_after_a_level() {
         let Some(mut runner) = runner_with_start(Start::Map) else {
             return;
         };
-        runner.begin_entry(PendingLevel::Area(2));
-        for _ in 0..31 {
-            runner.step(0);
-            assert!(
-                runner.session.is_none(),
-                "the area must wait for the border"
-            );
+        runner.set_two_player(true);
+        runner.start_act(29).expect("1-1 starts");
+        if let Some(session) = runner.session.as_mut() {
+            session.goal_card = Some(0);
         }
-        let frame = runner.render();
-        assert_eq!(&frame[0..4], &[0, 0, 0, 255], "the border is black");
-        // At 31 frames the 112-pixel border covers the whole 320x224 frame.
-        assert!(frame.chunks_exact(4).all(|p| p == [0, 0, 0, 255]));
-        runner.step(0);
-        assert!(runner.session.is_some(), "the area loads after 32 frames");
+        runner.finish_level();
+        assert_eq!(
+            runner.flow.progress.current_player, 1,
+            "Tails gets the next go"
+        );
+        assert_eq!(runner.flow.progress.lives, 4);
+    }
+
+    #[test]
+    fn tails_turn_uses_the_main_slot_without_the_tails_alone_error() {
+        let Some(mut runner) = runner_with_start(Start::Map) else {
+            return;
+        };
+        runner.set_two_player(true);
+        runner.set_current_player(1);
+        runner.start_act(29).expect("1-1 starts");
+        let session = runner.session.as_mut().expect("level session");
+        assert_eq!(session.active_player(), 1);
+        assert_eq!(session.world.ram.u16(vars::PLAYER_MODE), 3);
+        for _ in 0..120 {
+            session.step(0).expect("Tails turn steps");
+        }
+        assert!(session.stopped.is_none());
+        assert!(!session.exited);
     }
 
     #[test]

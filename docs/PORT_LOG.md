@@ -673,6 +673,39 @@ sprite clipping. These are the next batch.
   tile-memory/CHR composition); the card game itself is now ported and covered behaviourally. The ignored
   `frontend-match` golden remains the strict oracle for a later room-art pass.
 
+## 2026-10-20 - User change batch 3: map/2P/items/cards fixes
+
+* **Overworld movement SFX**: every accepted map step queues `map-move` through the map PCM player.
+* **Entry audio/transition**: the 32-frame closing border now belongs to the map's own `EntryProgress` (it is drawn by
+  `MapScreen::render_rgba`), so the border and its sound happen together. The map plays `map-move` during the border;
+  the level's own audio plays `enter-level` once when the level actually loads. The second CampaignRunner border and
+  its duplicate entry sound were removed.
+* **2P is turn-based, as SMB3**: player 1 has Sonic's go, player 2 has Tails' go. Only the active character is drawn on
+  the overworld; the map and level use `MapProgress.current_player`, and each player has a separate life stock
+  (`lives_p1`/`lives_p2`). Turns alternate after each level and after a death. On Tails' turn the main-character slot
+  carries Tails with Tails physics/sprites (so the camera/rings/collisions stay on the supported main slot) and is
+  driven by either keyboard. `--two-player` starts Sonic's turn; `--tails-turn` starts Tails' turn for testing.
+* **Mario kill sound**: native SMB3 enemies now queue `mario-kick` when stomped/spun/jumped into, when a sliding shell
+  knocks them out, and when a micro-Goomba is destroyed.
+* **Turtle spin**: added a 16-frame turn hysteresis to the SMB3 walker's wall/ledge turn. A red Koopa standing on a
+  brick no longer flips back and forth every frame; it walks out of the turn first.
+* **? blocks**: in campaign mode item blocks now give a **direct** Sonic reward instead of a floating monitor object:
+  a stable mix of shield, invincibility and ten rings across the item blocks, a rarer 1-up block, one-ring coin blocks,
+  and one ring from otherwise-unmapped block types (no empty ? boxes). Ten-coin bricks still pay one ring per hit.
+  These item/behaviour changes are gated by `Objects.user_changes`, set only by campaign sessions, so the 575 golden
+  traces still exercise the legacy oracle unchanged.
+* **End-of-level card art**: the unported SMB3 goal-card art (the blank box) is replaced in campaign sessions by the
+  matching Sonic monitor icon (ring/shield/invincibility), spawned as a display-only monitor-content object as soon as
+  the goal card is chosen. The persistent map slots already show the same monitor icons; `--cards` previews them.
+* **Card game presentation**: card backs are the gold-ring redraw, all face icons use the map's known-good Sonic monitor
+  frames (ring/shield/star/life), and the broken SMB3 bracket cursor was replaced with a ring marker. The card logic and
+  reward test are unchanged (`tests/match_game.rs`).
+* `--inputs FILE` drives frames from a golden-style input script; used to verify the map border and card flips.
+* **Known data gap**: World 1's castle panels (tileset 7, layout `$AD60`) have no converted campaign area at all, so
+  there is no castle level/object list to give enemies or fireballs. The map manifest marks those entries without an
+  `areaId`; this needs the stock SMB3 castle extractor (M7), not a runtime patch. The same is true of the castle-like
+  `ts07` entries in other worlds.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

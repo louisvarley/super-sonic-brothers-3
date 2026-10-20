@@ -101,6 +101,9 @@ pub struct Objects {
     pub lost_rings_animations: Vec<u8>,
     /// Animal species tables (`objects/animal/animals.json`).
     pub animal_data: Option<crate::graphics::AnimalData>,
+    /// Campaign mode's user-requested item/behaviour changes (block rewards, goal cards, Koopa turn hysteresis).
+    /// The golden traces keep the legacy oracle at `false`.
+    pub user_changes: bool,
 }
 
 impl Default for Objects {
@@ -136,6 +139,7 @@ impl Objects {
             buzzer_animations: Vec::new(),
             lost_rings_animations: Vec::new(),
             animal_data: None,
+            user_changes: false,
         }
     }
 
@@ -299,9 +303,9 @@ impl Objects {
             0x79 => actend::starpost(ram, o),
             0x7D => delete_object(ram, o),
             0xDE => actend::giant_ring_flash(ram, o),
-            ids::BLOCK => smb3::block(ram, sets, o)?,
+            ids::BLOCK => smb3::block(ram, sets, o, self.user_changes)?,
             ids::GOOMBA | ids::PARAGOOMBA => smb3::goomba(ram, sets, o),
-            ids::KOOPA | ids::PARATROOPA => smb3::koopa(ram, sets, o),
+            ids::KOOPA | ids::PARATROOPA => smb3::koopa(ram, sets, o, self.user_changes),
             ids::PIRANHA => smb3::piranha(ram, sets, o),
             ids::FIREBALL => smb3::fireball(ram, o),
             ids::GOOMBA_PIPE => smb3::goomba_pipe(ram, o),
@@ -317,7 +321,13 @@ impl Objects {
             common_ids::POINTS => common::points(ram, o),
             common_ids::GOAL => {
                 if crate::camera::is_easter_egg(ram.u8(vars::CURRENT_ZONE_AND_ACT)) {
-                    smb3::roulette_goal(ram, o, &mut self.goal_card)
+                    smb3::roulette_goal(
+                        ram,
+                        o,
+                        &mut self.goal_card,
+                        &self.monitor_frame_offsets,
+                        self.user_changes,
+                    )
                 } else {
                     actend::signpost(ram, o)
                 }

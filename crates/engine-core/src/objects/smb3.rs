@@ -88,7 +88,22 @@ fn set_flip(ram: &mut Ram, o: Obj) {
 }
 
 /// `Smb3.Walk`: fall/land, walk at `speed`, turn at walls (and at ledges if asked).
-fn walk(ram: &mut Ram, sets: &CollisionSets, o: Obj, speed: i32, turn_at_ledges: bool) -> bool {
+fn walk(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    speed: i32,
+    turn_at_ledges: bool,
+    user_changes: bool,
+) -> bool {
+    let mut turn_cooldown = 0;
+    if user_changes {
+        turn_cooldown = o.byte(ram, 0x35);
+        if turn_cooldown != 0 {
+            turn_cooldown -= 1;
+            o.set_byte(ram, 0x35, turn_cooldown);
+        }
+    }
     o.set_x_vel(
         ram,
         if facing_right(ram, o) {
@@ -121,10 +136,15 @@ fn walk(ram: &mut Ram, sets: &CollisionSets, o: Obj, speed: i32, turn_at_ledges:
         check_left_wall(ram, sets, o, -8)
     };
     if (wall as i16) < 0 {
-        o.set_status(ram, o.status(ram) ^ 1);
-        let dx = if facing_right(ram, o) { 1 } else { -1 };
-        o.set_x(ram, (o.x(ram) as i32 + dx) as u16);
-    } else if turn_at_ledges && on_floor {
+        if turn_cooldown == 0 {
+            o.set_status(ram, o.status(ram) ^ 1);
+            if user_changes {
+                o.set_byte(ram, 0x35, 16);
+            }
+            let dx = if facing_right(ram, o) { 1 } else { -1 };
+            o.set_x(ram, (o.x(ram) as i32 + dx) as u16);
+        }
+    } else if turn_at_ledges && on_floor && turn_cooldown == 0 {
         let ahead = (o.x(ram) as i32 + if facing_right(ram, o) { 8 } else { -8 }) & 0xFFFF;
         let (mut dist, _) = check_floor(ram, sets, o, Some(ahead as u16));
         let feet = o.y(ram) as i32 + o.y_radius(ram) as i32;
@@ -133,6 +153,11 @@ fn walk(ram: &mut Ram, sets: &CollisionSets, o: Obj, speed: i32, turn_at_ledges:
         }
         if (dist as i16) >= 8 {
             o.set_status(ram, o.status(ram) ^ 1);
+            // Without this, a red Koopa standing on a brick sees "no floor" one pixel past the brick every frame
+            // and flips back and forth in place (the spinning turtle).
+            if user_changes {
+                o.set_byte(ram, 0x35, 16);
+            }
         }
     }
     on_floor
@@ -232,7 +257,12 @@ fn check_left_wall(ram: &mut Ram, sets: &CollisionSets, o: Obj, d3: i32) -> i32 
 // ------------------------------------------------------------------ $E0 block
 
 /// `$E0`: a ? block or brick (subtype = the SMB3 tile). Solid.
-pub fn block(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), crate::player::Unported> {
+pub fn block(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    user_changes: bool,
+) -> Result<(), crate::player::Unported> {
     if o.routine(ram) == 0 {
         init(ram, o, 0xF00000, 0x4340, 8, 0);
         o.set_word(ram, 0x30, o.y(ram)); // resting y
@@ -293,7 +323,7 @@ pub fn block(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), crate::p
         }
         o.set_byte(ram, 0x32, 8);
         sfx::mario(ram, sfx::mario::BUMP);
-        give(ram, o, player, tile);
+        give(ram, o, player, tile, user_changes);
     }
     display_or_mark_gone(ram, o);
     Ok(())
@@ -308,7 +338,7 @@ fn ball_touches(ram: &Ram, block: Obj, p: Obj) -> bool {
             < p.y_radius(ram) as i32 + 8
 }
 
-fn give(ram: &mut Ram, o: Obj, player: Obj, tile: u8) {
+fn give(ram: &mut Ram, o: Obj, player: Obj, tile: u8, user_changes: bool) {
     match tile {
         0x63 | 0x65 | 0x6B | 0x64 | 0x6C => {
             ring_pop(ram, o);
@@ -322,16 +352,42 @@ fn give(ram: &mut Ram, o: Obj, player: Obj, tile: u8) {
                 o.set_byte(ram, 0x34, 1);
             }
         }
+        // The item blocks' SMB3 fire-flower/leaf/star become a mix of Sonic rewards. The choice is stable for a
+        // given block (its x), so the three item blocks in 1-1 do not all give the same thing. The golden traces
+        // keep the legacy monitor-content path.
+        0x60 | 0x61 | 0x68 | 0x69 if user_changes => {
+            let item = match ((o.x(ram) >> 5) as u8 + tile) % 3 {
+                0 => 6, // shield
+                1 => 7, // invincibility
+                _ => 4, // 10 rings
+            };
+            apply_powerup(ram, player, item);
+            o.set_byte(ram, 0x34, 1);
+        }
         0x60 | 0x61 | 0x68 | 0x69 => {
             contents(ram, o, player, 6);
+            o.set_byte(ram, 0x34, 1);
+        }
+        0x62 | 0x6A if user_changes => {
+            apply_powerup(ram, player, 4);
             o.set_byte(ram, 0x34, 1);
         }
         0x62 | 0x6A => {
             contents(ram, o, player, 7);
             o.set_byte(ram, 0x34, 1);
         }
+        0x6E if user_changes => {
+            apply_powerup(ram, player, 1);
+            o.set_byte(ram, 0x34, 1);
+        }
         0x6E => {
             contents(ram, o, player, 1);
+            o.set_byte(ram, 0x34, 1);
+        }
+        _ if user_changes => {
+            // SMB3's remaining ? block types (P-switch, vine, ...) have no Sonic equivalent; never leave a block
+            // empty: it pays at least one ring.
+            ring_pop(ram, o);
             o.set_byte(ram, 0x34, 1);
         }
         _ => o.set_byte(ram, 0x34, 1),
@@ -349,6 +405,7 @@ fn ring_pop(ram: &mut Ram, o: Obj) {
     }
 }
 
+/// The legacy monitor-contents object (the golden traces' path).
 fn contents(ram: &mut Ram, o: Obj, player: Obj, monitor_item: u8) {
     sfx::mario(
         ram,
@@ -364,6 +421,65 @@ fn contents(ram: &mut Ram, o: Obj, player: Obj, monitor_item: u8) {
         slot.set_y(ram, o.y(ram).wrapping_sub(0x10));
         slot.set_anim(ram, monitor_item);
         slot.set_word(ram, 0x3E, player.address());
+    }
+}
+
+/// Applies a block/card reward directly to the player. `4` = ten rings, `5` = speed shoes, `6` = shield,
+/// `7` = invincibility, `1` = 1-up.
+fn apply_powerup(ram: &mut Ram, player: Obj, item: u8) {
+    let sonic = player.address() == vars::MAIN_CHARACTER;
+    match item {
+        1 => {
+            let lives = if sonic {
+                vars::LIFE_COUNT
+            } else {
+                vars::LIFE_COUNT_P2
+            };
+            let update = if sonic {
+                vars::UPDATE_HUD_LIVES
+            } else {
+                vars::UPDATE_HUD_LIVES_P2
+            };
+            ram.w8(lives, ram.u8(lives).wrapping_add(1));
+            ram.w8(update, 1);
+            sfx::mario(ram, sfx::mario::ONE_UP);
+        }
+        4 => {
+            for _ in 0..10 {
+                crate::objects::touch::collect_ring_for_silent(ram, !sonic);
+            }
+            sfx::mario(ram, sfx::mario::COIN);
+        }
+        5 => {
+            player.set_has_speed_shoes(ram, true);
+            player.set_speed_shoes_time(ram, 0x4B0);
+            let top = if sonic {
+                vars::SONIC_TOP_SPEED
+            } else {
+                vars::TAILS_TOP_SPEED
+            };
+            ram.w16(top, 0xC00);
+            ram.w16(top.wrapping_add(2), 0x18);
+            sfx::mario(ram, sfx::mario::POWERUP);
+        }
+        6 => {
+            player.set_has_shield(ram, true);
+            if let Some(shield) = find_free_slot(ram) {
+                shield.set_id(ram, 0x38);
+                shield.set_word(ram, 0x3E, player.address());
+            }
+            sfx::mario(ram, sfx::mario::POWERUP);
+        }
+        7 => {
+            player.set_invincible(ram, true);
+            player.set_invincibility_time(ram, 0x4B0);
+            if let Some(stars) = find_free_slot(ram) {
+                stars.set_id(ram, 0x35);
+                stars.set_word(ram, 0x3E, player.address());
+            }
+            sfx::mario(ram, sfx::mario::POWERUP);
+        }
+        _ => {}
     }
 }
 
@@ -439,7 +555,7 @@ pub fn goomba(ram: &mut Ram, sets: &CollisionSets, o: Obj) {
         o.set_mappings(ram, 0xF01000);
         o.set_collision_flags(ram, 0x0B);
     }
-    let on_floor = walk(ram, sets, o, 0x80, false);
+    let on_floor = walk(ram, sets, o, 0x80, false, false);
     let t = tick(ram, o);
     if o.id(ram) == ids::PARAGOOMBA {
         if on_floor {
@@ -525,7 +641,7 @@ const SLIDING: u8 = 4;
 const COOLDOWN: u16 = 0x32;
 
 /// `$E3` Koopa Troopa and `$E4` Paratroopa.
-pub fn koopa(ram: &mut Ram, sets: &CollisionSets, o: Obj) {
+pub fn koopa(ram: &mut Ram, sets: &CollisionSets, o: Obj, user_changes: bool) {
     let winged = o.id(ram) == ids::PARATROOPA;
     let red = !winged && o.subtype(ram) != 0;
     if o.routine(ram) == 0 {
@@ -557,7 +673,7 @@ pub fn koopa(ram: &mut Ram, sets: &CollisionSets, o: Obj) {
                     to_shell(ram, o);
                 }
             } else {
-                let on_floor = walk(ram, sets, o, 0x80, red);
+                let on_floor = walk(ram, sets, o, 0x80, red, user_changes);
                 if winged {
                     if on_floor {
                         o.set_y_vel(ram, -0x380);
@@ -574,7 +690,7 @@ pub fn koopa(ram: &mut Ram, sets: &CollisionSets, o: Obj) {
             }
         }
         SHELL => {
-            walk(ram, sets, o, 0, false);
+            walk(ram, sets, o, 0, false, user_changes);
             if o.byte(ram, COOLDOWN) != 0 {
                 o.set_byte(ram, COOLDOWN, o.byte(ram, COOLDOWN) - 1);
             } else {
@@ -595,7 +711,7 @@ pub fn koopa(ram: &mut Ram, sets: &CollisionSets, o: Obj) {
                         o.set_collision_flags(ram, 0x0B);
                     }
                 }
-                walk(ram, sets, o, 0x400, false);
+                walk(ram, sets, o, 0x400, false, user_changes);
                 knock_out_others(ram, o);
             }
         }
@@ -634,6 +750,7 @@ fn knock_out_others(ram: &mut Ram, o: Obj) {
             let other = Obj::new(a);
             if overlaps(ram, o, other, 0x10, 0x14) {
                 crate::objects::touch::add_points(ram, 10);
+                sfx::mario(ram, sfx::mario::KICK);
                 other.set_id(ram, crate::objects::common_ids::EXPLOSION);
                 other.set_routine(ram, 0);
                 other.set_collision_flags(ram, 0);
@@ -831,6 +948,7 @@ pub fn micro_goomba(ram: &mut Ram, o: Obj) {
                     || sonic.anim(ram) == anim::SPINDASH;
                 if attacking {
                     crate::objects::touch::add_points(ram, 10);
+                    sfx::mario(ram, sfx::mario::KICK);
                     o.set_id(ram, crate::objects::common_ids::EXPLOSION);
                     o.set_routine(ram, 0);
                     return;
@@ -935,7 +1053,7 @@ pub fn boomerang_bro(ram: &mut Ram, sets: &CollisionSets, o: Obj) {
     } else if phase == 3 {
         o.set_status(ram, o.status(ram) & !1);
     }
-    let grounded = walk(ram, sets, o, if walking { 0x80 } else { 0 }, false);
+    let grounded = walk(ram, sets, o, if walking { 0x80 } else { 0 }, false, false);
     if grounded && t == 256 {
         o.set_y_vel(ram, -0x300);
     }
@@ -1013,7 +1131,13 @@ pub fn boomerang(ram: &mut Ram, o: Obj) {
 // ------------------------------------------------------------------ $0D RouletteGoal
 
 /// `$0D`: SMB3's goal roulette (in the signpost slot). `$E7` is its text.
-pub fn roulette_goal(ram: &mut Ram, o: Obj, goal_card: &mut Option<i32>) {
+pub fn roulette_goal(
+    ram: &mut Ram,
+    o: Obj,
+    goal_card: &mut Option<i32>,
+    monitor_frame_offsets: &[usize],
+    user_changes: bool,
+) {
     if o.id(ram) == 0xE7 {
         run_goal_text(ram, o);
         return;
@@ -1051,6 +1175,11 @@ pub fn roulette_goal(ram: &mut Ram, o: Obj, goal_card: &mut Option<i32>) {
             let course_clear_at = 0x60 - 0x1E;
             let got_card_at = 0x60 - 1;
             let end_at = got_card_at + 150;
+            if t == 1 && user_changes {
+                // The SMB3 goal-card art is not loaded by this port; show the Sonic monitor icon immediately so
+                // the card area is never an empty box during the goal animation.
+                spawn_goal_card(ram, o, o.byte(ram, 0x32), monitor_frame_offsets);
+            }
             if t == course_clear_at {
                 sfx::mario(ram, sfx::mario::COURSE_CLEAR);
                 goal_spawn_text(ram, 3, 104 - 4, 56 + 16);
@@ -1064,6 +1193,33 @@ pub fn roulette_goal(ram: &mut Ram, o: Obj, goal_card: &mut Option<i32>) {
         }
         _ => {}
     }
+}
+
+/// Replaces the unported SMB3 goal-card art with the corresponding Sonic monitor icon (ring, shield or
+/// invincibility) from the level's monitor graphics. The icon uses the existing monitor-contents display routine so
+/// it does not grant anything here; the card/life award happens when the goal finishes.
+fn spawn_goal_card(ram: &mut Ram, goal: Obj, card: u8, frame_offsets: &[usize]) {
+    let Some(slot) = find_free_slot(ram) else {
+        return;
+    };
+    let frame = match card {
+        0 => 5,
+        1 => 7,
+        _ => 8,
+    };
+    slot.set_id(ram, 0x2E);
+    slot.set_routine(ram, 4);
+    slot.set_word(ram, 0x1E, 0x7FFF);
+    slot.set_art_tile(ram, 0x8680);
+    slot.set_render_flags(ram, 0x24);
+    slot.set_priority(ram, 3);
+    slot.set_width_pixels(ram, 8);
+    slot.set_mapping_frame(ram, frame);
+    if let Some(offset) = frame_offsets.get(frame as usize) {
+        slot.set_mappings(ram, 0x15C7A + *offset as u32 + 2);
+    }
+    slot.set_x(ram, goal.x(ram));
+    slot.set_y(ram, goal.y(ram).wrapping_sub(16));
 }
 
 fn goal_untouched(ram: &mut Ram, o: Obj) {
@@ -1158,11 +1314,37 @@ mod tests {
         o.set_x(&mut ram, 100);
         o.set_y(&mut ram, 100);
         let player = Obj::new(vars::MAIN_CHARACTER);
-        give(&mut ram, o, player, 0x63);
+        give(&mut ram, o, player, 0x63, false);
         assert_eq!(ram.u16(vars::RING_COUNT), 1);
         assert_eq!(o.byte(&ram, 0x34), 1, "used");
         let points = Obj::new(vars::FIRST_DYNAMIC_SLOT + 0x40);
         assert_eq!(points.id(&ram), crate::objects::common_ids::POINTS);
+    }
+
+    #[test]
+    fn campaign_item_blocks_give_sonic_rewards_directly() {
+        let mut ram = Ram::new();
+        ram.w8(vars::LIFE_COUNT, 4);
+        let player = Obj::new(vars::MAIN_CHARACTER);
+        let block = |ram: &mut Ram, x: u16, tile: u8| {
+            let o = Obj::new(vars::FIRST_DYNAMIC_SLOT);
+            o.set_id(ram, ids::BLOCK);
+            o.set_subtype(ram, tile);
+            o.set_x(ram, x);
+            give(ram, o, player, tile, true);
+        };
+
+        block(&mut ram, 64, 0x61); // (2 + $61) % 3 == 0: shield
+        assert!(player.has_shield(&ram));
+        ram.w16(vars::RING_COUNT, 0);
+        block(&mut ram, 0, 0x61); // (0 + $61) % 3 == 1: invincibility
+        assert!(player.invincible(&ram));
+        block(&mut ram, 32, 0x61); // (1 + $61) % 3 == 2: ten rings
+        assert_eq!(ram.u16(vars::RING_COUNT), 10);
+        block(&mut ram, 0, 0x6E);
+        assert_eq!(ram.u8(vars::LIFE_COUNT), 5);
+        block(&mut ram, 0, 0x70); // no SMB3 item: at least one ring
+        assert_eq!(ram.u16(vars::RING_COUNT), 11);
     }
 
     #[test]
@@ -1178,12 +1360,12 @@ mod tests {
         o.set_word(&mut ram, 0x30, 100);
         o.set_byte(&mut ram, 0x32, 8);
         o.set_render_flags(&mut ram, 0x84);
-        block(&mut ram, &sets, o).expect("block");
+        block(&mut ram, &sets, o, false).expect("block");
         assert_eq!(o.y(&ram), 100);
         assert_eq!(o.byte(&ram, 0x32), 7);
-        block(&mut ram, &sets, o).expect("block");
+        block(&mut ram, &sets, o, false).expect("block");
         assert_eq!(o.y(&ram), 99, "bump 7 -> 1 px up");
-        block(&mut ram, &sets, o).expect("block");
+        block(&mut ram, &sets, o, false).expect("block");
         assert_eq!(o.y(&ram), 98, "bump 6 -> 2 px up");
     }
 
@@ -1360,7 +1542,7 @@ mod tests {
         ram.w16(vars::RING_COUNT, 5);
         ram.w16(vars::LEVEL_FRAME_COUNTER, 1);
         let mut card = None;
-        roulette_goal(&mut ram, o, &mut card);
+        roulette_goal(&mut ram, o, &mut card, &[], false);
         assert_eq!(o.routine(&ram), 4);
         assert_eq!(ram.u8(vars::UPDATE_HUD_TIMER), 0);
         assert_eq!(o.byte(&ram, 0x32), 1);
@@ -1368,7 +1550,7 @@ mod tests {
         assert_eq!(ram.u32(vars::SCORE), 45);
 
         // The fly-away locks the controls and runs Sonic to the right once he is grounded.
-        roulette_goal(&mut ram, o, &mut card);
+        roulette_goal(&mut ram, o, &mut card, &[], false);
         assert_eq!(o.y(&ram), 96);
         assert_eq!(ram.u8(vars::CONTROL_LOCKED), 1);
         assert_eq!(ram.u16(vars::CTRL1_HELD_LOGICAL), 0x0800);

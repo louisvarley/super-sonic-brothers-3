@@ -143,6 +143,24 @@ impl PlayerProfile {
         scroll_delay: vars::HORIZ_SCROLL_DELAY_VAL,
     };
 
+    /// Tails on the main-character slot for 2P turns: Tails' physics and tail sprite, but the camera, rings and
+    /// object collisions stay on the main player (so the unported Tails-alone camera path is not needed).
+    pub const TAILS_MAIN: Self = Self {
+        address: vars::MAIN_CHARACTER,
+        is_tails: true,
+        speed: vars::TAILS_TOP_SPEED,
+        ctrl: vars::CTRL2_HELD_LOGICAL,
+        look_delay: vars::TAILS_LOOK_DELAY_COUNTER,
+        camera_bias: vars::CAMERA_Y_POS_BIAS,
+        cam_min_x: vars::CAMERA_MIN_X_POS,
+        cam_max_x: vars::CAMERA_MAX_X_POS,
+        cam_max_y: vars::CAMERA_MAX_Y_POS,
+        stand_y_radius: 0x0F,
+        roll_shift: 1,
+        dust: vars::TAILS_DUST,
+        scroll_delay: vars::HORIZ_SCROLL_DELAY_VAL,
+    };
+
     pub const TAILS: Self = Self {
         address: vars::SIDEKICK,
         is_tails: true,
@@ -1977,7 +1995,7 @@ impl Player {
         if ram.u8(vars::CONTROL_LOCKED_P2) == 0 {
             ram.w16(vars::CTRL2_HELD_LOGICAL, ram.u16(vars::CTRL2_HELD));
         }
-        if ram.u16(vars::TWO_PLAYER_MODE) == 0 {
+        if ram.u16(vars::TWO_PLAYER_MODE) == 0 && ram.u16(vars::PLAYER_MODE) != 3 {
             self.tails_cpu(ram)?;
         }
         if (o.obj_control(ram) & 1) == 0 {

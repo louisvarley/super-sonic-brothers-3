@@ -40,6 +40,11 @@ pub struct MapProgress {
     pub power_ups: Vec<i32>,
     /// Tails is player 2 (the title's 2 PLAYER selection).
     pub two_player: bool,
+    /// 2P turns: 0 = Sonic's go, 1 = Tails' go.
+    pub current_player: u8,
+    /// Each player's own life stock in 2P mode; `lives` is the active player's.
+    pub lives_p1: i32,
+    pub lives_p2: i32,
 }
 impl Default for MapProgress {
     fn default() -> Self {
@@ -57,6 +62,9 @@ impl Default for MapProgress {
             deck_matches: 0,
             power_ups: Vec::new(),
             two_player: false,
+            current_player: 0,
+            lives_p1: 4,
+            lives_p2: 4,
         }
     }
 }
@@ -342,6 +350,13 @@ impl GameFlow {
                 s.step(&self.assets, buttons);
                 if s.finished() {
                     let mut progress = s.progress().clone();
+                    if progress.two_player {
+                        if progress.current_player == 1 {
+                            progress.lives_p2 = progress.lives;
+                        } else {
+                            progress.lives_p1 = progress.lives;
+                        }
+                    }
                     progress.clear_panel(SPADE_TILE);
                     self.progress = progress;
                     self.screen = ScreenState::Map(MapScreen::with_campaign(
@@ -1023,17 +1038,9 @@ impl MatchScreen {
         if !(0..18).contains(&card) {
             return;
         }
-        let mut buf = self.template(CARD_BASE_BUF_CMDS, CARD_BUF_CMDS_LENGTH);
-        let face = self.deck[card as usize] & 0x7F;
-        let mut attr = self.prg22(CARD_FACE_ATTRIBUTE + face as usize);
-        if !(6..12).contains(&card) {
-            attr = (attr << 4) | 0x0F;
-        }
-        if face >= CARD_ONE_UP {
-            buf[0x19] = self.prg22(CARD_BOTTOM_LEFT + (face - CARD_ONE_UP) as usize);
-            buf[0x1A] = self.prg22(CARD_BOTTOM_RIGHT + (face - CARD_ONE_UP) as usize);
-        }
-        self.run_card(buf, card, true, attr);
+        // Use the same clean ring card as the back. The old SMB3 card-face template uses a blue/blank picture base
+        // whose palette does not match the Sonic monitor icons; the icon is the face.
+        self.render_back(card);
         self.face_up[card as usize] = true;
     }
 
@@ -1067,41 +1074,24 @@ impl MatchScreen {
     }
 
     fn draw_cursor(&mut self) {
-        let x0 = self.prg22(CARD_CURSOR_XS + self.index as usize) as i32;
-        let mut y = self.prg22(CARD_CURSOR_YS + self.index as usize) as i32;
-        let mut x = x0;
-        let mut n = 0usize;
-        for _ in 0..4 {
-            self.push_cursor(x, y, n);
-            n += 1;
-            x += 8;
-        }
-        y += 16;
-        self.push_cursor(x0, y, n);
-        n += 1;
-        self.push_cursor(x0 + 24, y, n);
-        n += 1;
-        y += 16;
-        x = x0;
-        for _ in 0..4 {
-            self.push_cursor(x, y, n);
-            n += 1;
-            x += 8;
-        }
-    }
-
-    fn push_cursor(&mut self, x: i32, y: i32, n: usize) {
-        let pattern = self.prg22(CARD_SELECT_PATTERN + n);
-        let attr = self.prg22(CARD_SELECT_ATTRIBUTE + n);
-        let t = self.sprite_tile(pattern, (attr & 3) as usize);
-        let mut p = 0xE000 | t;
-        if (attr & 0x40) != 0 {
-            p |= 0x800;
-        }
-        if (attr & 0x80) != 0 {
-            p |= 0x1000;
-        }
-        self.extra_sprites.push((x, y, 1, p));
+        // The SMB3 bracket cursor is made of four graphics-buffer templates whose patterns are not part of the
+        // Sonic monitor art, and it reads as a jumble in this palette. Use a Sonic ring marker above the card.
+        let x = self.prg22(CARD_CURSOR_XS + self.index as usize) as i32;
+        let y = self.prg22(CARD_CURSOR_YS + self.index as usize) as i32;
+        let Some(piece) = self
+            .ctx
+            .assets
+            .monitor
+            .frames
+            .get(5)
+            .and_then(|f| f.first())
+        else {
+            return;
+        };
+        let pattern =
+            ((piece.pattern as usize & 0x7FF) + 0x580) | (piece.pattern as usize & 0x6000);
+        self.extra_sprites
+            .push((x + 4, y - 14, piece.size, 0x8000 | pattern as u16));
     }
 
     fn present_cards(&mut self) {
@@ -1116,8 +1106,9 @@ impl MatchScreen {
                 continue;
             }
             let face = deck[i] & 0x0F;
+            // Use the same monitor-icon frames as the map's card slots (5/7/8 and the life icon); the SMB3
+            // speed-shoes frame 6 is a blue monitor-base tile in the bonus-room palette and reads as a solid box.
             let frame = match face {
-                CARD_MUSHROOM => 6,
                 CARD_FLOWER => 7,
                 CARD_STAR => 8,
                 CARD_ONE_UP => 2,
@@ -1664,20 +1655,17 @@ impl MapScreen {
         let mut sk = SpriteKit::new(&mut p.ram, &mut p.vram);
         sk.begin();
         let fr = ((self.frames >> (if self.move_left > 0 { 3 } else { 4 })) & 1) as usize;
+        let avatar = if self.progress.two_player && self.progress.current_player == 1 {
+            0x5C8
+        } else {
+            0x5C0
+        };
         sk.piece(
             self.x + 32,
             self.y - 8 - 1,
             5,
-            (0x8000 | (0x5C0 + fr * 4)) as u16,
+            (0x8000 | (avatar + fr * 4)) as u16,
         );
-        if self.progress.two_player {
-            sk.piece(
-                self.x + 32 + 18,
-                self.y - 8 - 1,
-                5,
-                (0x8000 | (0x5C8 + fr * 4)) as u16,
-            );
-        }
         for (x, y, size, pattern) in card_pieces {
             sk.piece(x, y, size, pattern);
         }
@@ -1727,7 +1715,7 @@ impl MapScreen {
                 && !self.progress.is_cleared(SPADE_TILE);
             let campaign_area = self.areas.get(&tile).filter(|a| a.available()).cloned();
             if legacy_stage || minigame || campaign_area.is_some() {
-                self.sound_effects.push("enter-level");
+                self.sound_effects.push("map-move");
                 self.pending_action = Some(if legacy_stage {
                     let zone = panel_zone(tile).unwrap();
                     MapAction::StartZone { zone, act: 1 }
@@ -1817,6 +1805,7 @@ impl MapScreen {
         self.move_dir = bit;
         self.move_left = 32;
         self.progress.last_move = bit;
+        self.sound_effects.push("map-move");
     }
 
     fn is_level(&self, tile: u8) -> bool {
@@ -1843,7 +1832,32 @@ impl MapScreen {
 
     pub fn render_rgba(&mut self, v: &mut Vdp) -> Vec<u8> {
         let line = |line: usize| Some(if line + 8 < 193 { 8 } else { 7 });
-        self.ctx.render_rgba(v, &line, &line)
+        let mut rgba = self.ctx.render_rgba(v, &line, &line);
+        if self.entry_progress > 0 {
+            draw_map_entry_border(&mut rgba, self.entry_progress);
+        }
+        rgba
+    }
+}
+
+/// The SMB3 map-entry closing border (the map's own 32-frame `EntryProgress`, not a second transition).
+fn draw_map_entry_border(rgba: &mut [u8], progress: i32) {
+    const W: usize = 320;
+    const H: usize = 224;
+    let thickness = (progress.max(0) as usize * 4).min(112);
+    if thickness == 0 {
+        return;
+    }
+    for y in 0..H {
+        for x in 0..W {
+            if x < thickness || x >= W - thickness || y < thickness || y >= H - thickness {
+                let i = (y * W + x) * 4;
+                rgba[i] = 0;
+                rgba[i + 1] = 0;
+                rgba[i + 2] = 0;
+                rgba[i + 3] = 255;
+            }
+        }
     }
 }
 

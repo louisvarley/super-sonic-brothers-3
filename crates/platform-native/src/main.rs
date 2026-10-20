@@ -34,6 +34,9 @@ struct Options {
     campaign_act: Option<u16>,
     match_game: bool,
     two_player: bool,
+    tails_turn: bool,
+    preview_cards: bool,
+    inputs: Option<PathBuf>,
     list_campaign: bool,
     scale: Scale,
     frames: Option<u32>,
@@ -88,8 +91,8 @@ fn usage() -> ! {
         "Sonic Bros. 3 (Rust port)\n\
          \n\
          Usage: sonic-bros-3 [--data web-data/campaign.bin] [--map] [--world 1-8] [--map-screen N]\n\
-         \x20      [--campaign-act N] [--match] [--two-player] [--level 1-1|1-2|1-3] [--zone 0xNN --act N] [--scale 1|2|4|8]\n\
-         \x20      [--frames N --screenshot out.png] [--mute] [--list-campaign]\n\
+         \x20      [--campaign-act N] [--match] [--two-player|--tails-turn] [--cards] [--level 1-1|1-2|1-3]\n\
+         \x20      [--frames N --screenshot out.png] [--inputs script.txt] [--mute] [--list-campaign]\n\
          \n\
          With campaign.bin and no --level/--zone, starts at the SMB3 title/curtain; press Enter at the menu to\n\
          enter the World 1 map. --map skips the title. --campaign-act enters one area directly.\n\
@@ -111,6 +114,9 @@ fn parse_args() -> Options {
     let mut campaign_act = None;
     let mut match_game = false;
     let mut two_player = false;
+    let mut tails_turn = false;
+    let mut preview_cards = false;
+    let mut inputs = None;
     let mut list_campaign = false;
     let mut scale = Scale::X4;
     let mut frames = None;
@@ -179,6 +185,15 @@ fn parse_args() -> Options {
             }
             "--match" => match_game = true,
             "--two-player" => two_player = true,
+            "--tails-turn" => {
+                two_player = true;
+                tails_turn = true;
+            }
+            "--cards" => preview_cards = true,
+            "--inputs" => {
+                i += 1;
+                inputs = Some(PathBuf::from(args.get(i).unwrap_or_else(|| usage())));
+            }
             "--list-campaign" => list_campaign = true,
             "--scale" => {
                 i += 1;
@@ -225,6 +240,9 @@ fn parse_args() -> Options {
         campaign_act,
         match_game,
         two_player,
+        tails_turn,
+        preview_cards,
+        inputs,
         list_campaign,
         scale,
         frames,
@@ -389,6 +407,19 @@ fn main() {
         if opts.two_player {
             runner.set_two_player(true);
         }
+        if opts.tails_turn {
+            runner.set_current_player(1);
+        }
+        if opts.preview_cards {
+            runner.flow.progress.cards = vec![
+                engine_core::frontend::Card::Ring,
+                engine_core::frontend::Card::Shield,
+                engine_core::frontend::Card::Invincibility,
+            ];
+            runner
+                .flow
+                .set_progress_map(runner.flow.progress.clone(), false);
+        }
         if let Some(act) = opts.campaign_act {
             if let Err(e) = runner.start_act(act) {
                 eprintln!("campaign act {act}: {e}");
@@ -425,10 +456,24 @@ fn main() {
         None
     };
 
+    let script = opts
+        .inputs
+        .as_ref()
+        .map(|path| {
+            std::fs::read_to_string(path)
+                .map(|text| parse_script(&text))
+                .unwrap_or_else(|e| {
+                    eprintln!("inputs {}: {e}", path.display());
+                    std::process::exit(1);
+                })
+        })
+        .unwrap_or_default();
+
     if let Some(frames) = opts.frames {
         let mut failure = None;
-        for _ in 0..frames {
-            if let Err(e) = running.step(0) {
+        for frame in 1..=frames {
+            let buttons = buttons_at(&script, frame);
+            if let Err(e) = running.step(buttons) {
                 failure = Some(e);
                 break;
             }
@@ -560,6 +605,48 @@ fn list_campaign(archive: &Archive) {
             world.entries.len()
         );
     }
+}
+
+fn parse_script(text: &str) -> Vec<(u32, u8)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let Ok(frame) = parts.next().unwrap_or("").parse() else {
+            continue;
+        };
+        let mut buttons = 0u8;
+        for c in parts.next().unwrap_or("-").chars() {
+            buttons |= match c {
+                'U' => 0x01,
+                'D' => 0x02,
+                'L' => 0x04,
+                'R' => 0x08,
+                'B' => 0x10,
+                'C' => 0x20,
+                'A' => 0x40,
+                'S' => 0x80,
+                _ => 0,
+            };
+        }
+        out.push((frame, buttons));
+    }
+    out.sort_by_key(|(frame, _)| *frame);
+    out
+}
+
+fn buttons_at(script: &[(u32, u8)], frame: u32) -> u8 {
+    let mut buttons = 0;
+    for &(at, value) in script {
+        if at > frame {
+            break;
+        }
+        buttons = value;
+    }
+    buttons
 }
 
 fn read_buttons(window: &Window) -> u8 {
