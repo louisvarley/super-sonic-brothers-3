@@ -48,6 +48,11 @@ pub struct GlobalAssets {
     pub mz_wave: Vec<u8>,
     /// The results screen's level order (`objects/signpost/level-order.json`).
     pub level_order: Vec<u8>,
+    /// The lava-line palette colours (`objects/lava-line/colours.json`).
+    pub lava_colours: Vec<u8>,
+    /// The collapsing ledge's top profile and fragment delays (`objects/ledge/ledge.json`).
+    pub ledge_slope: Vec<i8>,
+    pub ledge_delays: Vec<u8>,
     /// `objects/frontend/title-scroll.json`; indexed from 0xDFA8.
     pub wave_table: Vec<u8>,
     pub palette_cycle: Option<PaletteCycle>,

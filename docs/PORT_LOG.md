@@ -435,6 +435,45 @@ The SMB3 goal traces must be generated with `--zone`/`--act` rather than `--leve
 * `Results`/signpost are ported but not exercised by these six traces (the SMB3 goal is not a signpost act); the next
   act load after results is ready for a future signpost trace.
 
+## 2026-10-20 — Phase 2 M4d: Green Hill and Marble Zone acts 1-2 (verified)
+
+### New traces (generator, committed)
+`tools/golden/generate.mjs` now records `sonic-ghz-1-playing-{idle,right,jump,spindash}`,
+`sonic-ghz-2-playing-{...}`, `sonic-mz-1-playing-{...}` and `sonic-mz-2-playing-{...}`: 600 ticks each,
+`noTitleCard: true`, zones `$11`/`$11`/`$13`/`$13` acts 1/2, merged with the existing scripts.
+
+### Camera / level data
+* Added `Camera::GhzEvents`/`Ghz3Events`, `Mz1Events`/`Mz2Events`/`Mz3Events`, `SwScrlGhz` and `SwScrlMz` (the
+  latter already existed from M4c-2 and is now exercised by acts 1/2).
+* Added the lava-line module: `LavaLine.Init`/`Step` (per-act line height, line mode/scanline), exact lava palette
+  RAM at `$FFDA..$FFEC`, and a `split` helper for the M5 renderer. `World` initialises it and `Session` steps it
+  before the players, matching `World.Step`.
+
+### Objects filled in
+* GHZ: Motobug `$40`, Crabmeat `$1F`, Buzz Bomber `$22`/missile `$23`, Chopper `$2B`, Newtron `$42`, Rock `$3B`,
+  Wall `$3C`, EdgeWall `$44`, Scenery `$1C`, Spikes `$36`, ForceRoll `$06`, SwingingPlatform `$15`, collapsing
+  Ledge `$1A` (real slope/delay tables), WaterfallSound `$49`.
+* Shared/hack: monitor `$26` + contents `$2E`, Bridge `$11`, Platform `$18`, Spring `$41`, star post `$79`,
+  giant ring `$4B`, results/signpost/game over.
+* MZ: LavaBallMaker `$13`, LavaBall `$14`, GrassFire `$19`, GrassPlatform fires, LavaMarker `$54`, InvisibleBlock
+  `$71`, GlassBlock `$30`, MarbleBrick `$46`, BreakableBlock `$51`, ChainedStomper `$31`, Button `$32`, PushBlock
+  `$33`, MovingBlock `$52`, CollapsingFloor `$53`, GeyserMaker `$4C`, Geyser `$4D`, LavaWall `$4E`, Basaran `$55`,
+  Caterkiller `$78`, MZ boss/fire.
+* `$7D` remains the original's `DeleteObject` in hack zones.
+
+### Findings
+* The MZ lava line does **not** itself kill; MZ deaths in these traces come from lava-marker/fire/lava-ball hitboxes.
+  The first MZ2 death (tick 304/283) is a GrassFire spawned when the grass platform reaches `Sink == $20`.
+* GHZ1's `jump` ring divergence was Tails collecting the 10-ring monitor contents; the hack column was missing
+  `$2E` and had left the contents object inert.
+* Crabmeat's walk must check the floor 16 px ahead; without that it walked off the ledge into Sonic.
+
+### Verification
+* `cargo test -p engine-core --test ghz_mz_motion -- --nocapture`: all **16/16** traces match MOTION for 600 ticks.
+* `cargo test --workspace`: 68 engine-core unit tests + 5 motion tests (act-end, EHZ, GHZ/MZ, 1-1, SMB3) + 2
+  golden-trace + 5 rom-assets — all pass.
+* `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

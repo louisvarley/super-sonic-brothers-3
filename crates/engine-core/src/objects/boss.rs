@@ -2279,6 +2279,15 @@ pub fn grass_platform(
     Ok(())
 }
 
+fn add_grass_fire(ram: &mut Ram, platform: Obj, fire: Obj) {
+    let count = platform.byte(ram, 0x36);
+    if count >= 6 {
+        return;
+    }
+    platform.set_byte(ram, 0x36, count + 1);
+    platform.set_byte(ram, 0x37 + count as u16, fire.slot_index());
+}
+
 fn grass_move(ram: &mut Ram, o: Obj) {
     let kind = o.subtype(ram) & 7;
     if kind == 0 {
@@ -2295,6 +2304,22 @@ fn grass_move(ram: &mut Ram, o: Obj) {
         let (sin, _) = crate::math::calc_sine(sink as u8);
         let depth = (sin as u16 >> 4) as i32;
         o.set_y(ram, (o.word(ram, 0x2C) as i32 + depth) as u16);
+        if sink == 0x20 && o.byte(ram, 0x35) == 0 {
+            o.set_byte(ram, 0x35, 1);
+            if let Some(fire) = crate::objects::find_free_slot_after(ram, o) {
+                fire.set_id(ram, 0x19);
+                fire.set_x(ram, o.x(ram).wrapping_sub(0x40));
+                fire.set_word(ram, 0x2C, o.word(ram, 0x2C).wrapping_add(8).wrapping_sub(3));
+                fire.set_long(ram, 0x30, o.long(ram, 0x30));
+                fire.set_long(ram, 0x38, 0xFFFF_0000 | o.address() as u32);
+                add_grass_fire(ram, o, fire);
+            }
+        }
+        let count = o.byte(ram, 0x36);
+        for i in 0..count {
+            let fire = Obj::from_slot(o.byte(ram, 0x37 + i as u16));
+            fire.set_word(ram, 0x3C, depth as u16);
+        }
         return;
     }
     if kind > 5 {

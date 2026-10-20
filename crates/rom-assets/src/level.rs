@@ -256,6 +256,13 @@ impl LevelData {
         if let Ok(order) = archive.read_json("objects/signpost/level-order.json") {
             globals.level_order = u8_array(&order["data"]).unwrap_or_default();
         }
+        if let Ok(lava) = archive.read_json("objects/lava-line/colours.json") {
+            globals.lava_colours = u8_array(&lava["data"]).unwrap_or_default();
+        }
+        if let Ok(ledge) = archive.read_json("objects/ledge/ledge.json") {
+            globals.ledge_slope = i8_array(&ledge["slope"]).unwrap_or_default();
+            globals.ledge_delays = u8_array(&ledge["delays"]).unwrap_or_default();
+        }
         if let (Ok(heights), Ok(angles)) = (
             archive.read_json("objects/spiral/heights.json"),
             archive.read_json("objects/spiral/flip-angles.json"),
@@ -487,6 +494,18 @@ fn word_array(v: &Value) -> Result<Vec<u16>, String> {
             x.as_u64()
                 .map(|n| n as u16)
                 .ok_or_else(|| "expected a word value".to_string())
+        })
+        .collect()
+}
+
+fn i8_array(v: &Value) -> Result<Vec<i8>, String> {
+    v.as_array()
+        .ok_or("expected an array of signed bytes")?
+        .iter()
+        .map(|x| {
+            x.as_i64()
+                .map(|n| n as i8)
+                .ok_or_else(|| "expected a signed byte value".to_string())
         })
         .collect()
 }

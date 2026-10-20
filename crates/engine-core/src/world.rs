@@ -155,6 +155,7 @@ impl World {
 
         level.fill_level_ram(&mut ram, zone, act);
         let globals = level.globals();
+        crate::lava_line::init(&mut ram, zone, &globals.lava_colours);
         let no_oscillation = crate::oscillation::OscillationData::default();
         let oscillation = Oscillation::new(globals.oscillation.as_ref().unwrap_or(&no_oscillation));
 
@@ -290,6 +291,8 @@ impl World {
                 globals.mz_heights.clone(),
                 globals.mz_wave.clone(),
                 globals.level_order.clone(),
+                globals.ledge_slope.clone(),
+                globals.ledge_delays.clone(),
             ),
             rings,
             globals,

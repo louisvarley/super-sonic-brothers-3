@@ -11,6 +11,7 @@ pub mod animation;
 pub mod assets;
 pub mod camera;
 pub mod collision;
+pub mod lava_line;
 pub mod math;
 pub mod math_tables;
 pub mod object;

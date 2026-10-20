@@ -9,6 +9,7 @@ pub mod actend;
 pub mod boss;
 pub mod common;
 pub mod ehz;
+pub mod ghz_mz;
 pub mod manager;
 pub mod smb3;
 pub mod solid;
@@ -69,6 +70,9 @@ pub struct Objects {
     pub mz_wave: Vec<u8>,
     /// The results screen's level order.
     pub level_order: Vec<u8>,
+    /// The collapsing ledge's height profile and fragment delays.
+    pub ledge_slope: Vec<i8>,
+    pub ledge_delays: Vec<u8>,
 }
 
 impl Default for Objects {
@@ -89,9 +93,12 @@ impl Objects {
             mz_heights: Vec::new(),
             mz_wave: Vec::new(),
             level_order: Vec::new(),
+            ledge_slope: Vec::new(),
+            ledge_delays: Vec::new(),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_assets(
         bridge: Option<BridgeData>,
         spring_slopes: Option<SpringSlopes>,
@@ -99,6 +106,8 @@ impl Objects {
         mz_heights: Vec<u8>,
         mz_wave: Vec<u8>,
         level_order: Vec<u8>,
+        ledge_slope: Vec<i8>,
+        ledge_delays: Vec<u8>,
     ) -> Self {
         Self {
             bridge,
@@ -107,6 +116,8 @@ impl Objects {
             mz_heights,
             mz_wave,
             level_order,
+            ledge_slope,
+            ledge_delays,
             ..Self::new()
         }
     }
@@ -196,23 +207,56 @@ impl Objects {
             return self.run_s2_object(ram, sets, o, id);
         }
         match id {
+            0x06 => ghz_mz::force_roll(ram, o),
+            0x11 => ehz::bridge(ram, o, self.bridge.as_ref())?,
+            0x13 => ghz_mz::lava_ball_maker(ram, o),
             0x14 => boss::lava_ball(ram, sets, o)?,
+            0x15 => ghz_mz::swinging_platform(ram, sets, o)?,
             0x18 => ehz::platform(ram, sets, o)?,
+            0x19 => ghz_mz::grass_fire(ram, o, &self.mz_heights)?,
+            0x1A => ghz_mz::ledge(ram, o, &self.ledge_slope, &self.ledge_delays)?,
+            0x1C => ghz_mz::scenery(ram, o)?,
+            0x1F => ghz_mz::crabmeat(ram, sets, o)?,
             0x22 => boss::buzz_bomber(ram, o),
             0x23 => boss::missile(ram, o),
+            0x26 => ehz::monitor(ram, sets, o)?,
+            0x2B => ghz_mz::chopper(ram, o),
+            0x2E => ehz::monitor_contents(ram, o)?,
             0x2F => boss::grass_platform(ram, sets, o, &self.mz_heights)?,
+            0x30 => ghz_mz::glass_block(ram, sets, o)?,
+            0x31 => ghz_mz::chained_stomper(ram, sets, o)?,
+            0x32 => ghz_mz::button(ram, sets, o)?,
+            0x33 => ghz_mz::push_block(ram, sets, o)?,
+            0x36 => ghz_mz::spikes(ram, sets, o)?,
+            0x3B => ghz_mz::rock(ram, sets, o)?,
+            0x3C => ghz_mz::wall(ram, sets, o)?,
             0x3D => boss::ghz_boss(ram, sets, o)?,
             0x3E => actend::egg_prison(ram, sets, o)?,
             0x39 => actend::game_over(ram, o),
             0x3A => actend::results(ram, o, &self.level_order)?,
+            0x40 => ghz_mz::motobug(ram, sets, o)?,
             0x41 => ehz::spring(ram, sets, o, self.spring_slopes.as_ref())?,
+            0x42 => ghz_mz::newtron(ram, sets, o)?,
+            0x44 => ghz_mz::edge_wall(ram, sets, o),
+            0x46 => ghz_mz::marble_brick(ram, sets, o)?,
             0x48 => boss::wrecking_ball(ram, o)?,
+            0x49 => ghz_mz::waterfall_sound(ram, o),
             0x4B => actend::giant_ring(ram, o),
+            0x4C => ghz_mz::geyser_maker(ram, o),
+            0x4D => ghz_mz::geyser(ram, o),
+            0x4E => ghz_mz::lava_wall(ram, sets, o)?,
+            0x51 => ghz_mz::breakable_block(ram, sets, o)?,
+            0x52 => ghz_mz::moving_block(ram, sets, o)?,
+            0x53 => ghz_mz::collapsing_floor(ram, sets, o)?,
+            0x54 => ghz_mz::lava_marker(ram, o),
+            0x55 => ghz_mz::basaran(ram, o)?,
             0x58 => boss::boss_explosion(ram, o),
+            0x71 => ghz_mz::invisible_block(ram, sets, o)?,
             0x73 => boss::mz_boss(ram, sets, o)?,
             0x74 => boss::boss_fire(ram, sets, o)?,
             0x78 => boss::caterkiller(ram, sets, o, &self.mz_wave)?,
             0x79 => actend::starpost(ram, o),
+            0x7D => delete_object(ram, o),
             0xDE => actend::giant_ring_flash(ram, o),
             ids::BLOCK => smb3::block(ram, sets, o)?,
             ids::GOOMBA | ids::PARAGOOMBA => smb3::goomba(ram, sets, o),

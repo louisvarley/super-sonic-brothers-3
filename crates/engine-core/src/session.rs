@@ -113,6 +113,7 @@ impl Session {
         self.world
             .ram
             .w16(vars::LEVEL_FRAME_COUNTER, counter.wrapping_add(1));
+        crate::lava_line::step(&mut self.world.ram);
 
         let dying = self.world.ram.u8(vars::MAIN_CHARACTER) != 0
             && self.world.sonic.obj.routine(&self.world.ram) >= crate::player::routine::DEAD;
