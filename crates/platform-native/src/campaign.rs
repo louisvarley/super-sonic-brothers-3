@@ -463,7 +463,15 @@ impl CampaignRunner {
         if matches!(self.flow.screen, ScreenState::Map(_)) && self.map_audio.is_none() {
             self.start_map_audio(self.flow.progress.world as u8);
         }
-        let effects = self.flow.take_map_sound_effects();
+        let mut effects = self.flow.take_map_sound_effects();
+        if matches!(
+            action,
+            Some(MapAction::StartArea { .. } | MapAction::StartZone { .. })
+        ) {
+            // The level's own audio replays `enter-level` after the border; playing it on the map first would cut
+            // it when the map audio is dropped.
+            effects.retain(|effect| *effect != "enter-level");
+        }
         if let Some(audio) = self.map_audio.as_mut() {
             for effect in effects {
                 audio.play_effect(effect);
@@ -487,7 +495,7 @@ impl CampaignRunner {
 
     fn begin_entry(&mut self, pending: PendingLevel) {
         if let Some(audio) = self.map_audio.as_mut() {
-            audio.play_effect("enter-level");
+            audio.play_effect("map-move");
         }
         self.entry = Some(EntryTransition { frames: 0, pending });
     }

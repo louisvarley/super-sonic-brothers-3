@@ -664,6 +664,8 @@ sprite clipping. These are the next batch.
   paired far-end pipeway destination), and a sprite clip rectangle so a player disappears into a pipe instead of
   drawing over its rim.
 * The card backs are the gold ring redraw (not the N-Spade), and the card-game status bar gets the same [S] badge as the map.
+* Entry audio no longer starts on the map audio and is cut at load: the 32-frame border plays `map-move`, then the
+  new level's own audio plays `enter-level` from the start.
 * `--match` boots straight into the card game (with map music) for testing; `--two-player` forces the 2P map/level flag; `--list-campaign` is unchanged.
 * Tests: `session::tests::a_local_pipe_carries_the_players_and_returns_control`,
   `tests/match_game.rs` (18-card deal/render), and the existing 575 golden traces still pass.
