@@ -585,6 +585,25 @@ Next: `platform-web` (WASM + canvas + ROM file picker), then audio, the stock im
 ### Remaining
 * Source map commands, world transitions, locks, bridges, wandering enemies and world-clear bosses are adapters not yet implemented. One failed area (opcode $00 at $CFD7) and one blocked vertical area (180 rows > 128-row layout) remain. Map pipes/card game and the title/match K5 screens are still partial.
 
+## 2026-10-20 - Phase 2 M7 title: exact SMB3 intro/title, boot to World 1 map
+
+### Implemented
+* `engine_core::frontend::title::TitleScreen` line-by-line port of `Sb3TitleScreen`: own VRAM art and palette 03, curtain fill/raise, Video_Upd items $01/$08-$22, logo drop/shake, palette fades $03-$06, 3-glow, 1P/2P menu, skip/timeout, and the Sonic/Tails/Goomba/shell actor scripts and DPLC sprites.
+* `GameFlow` handles `TitleAction::StartGame` by resetting progress to the World 1 map and `BackToTitle` by recreating the title. Native campaign mode boots at `Start::Title` by default, `--map` skips to the map, and `--title` is explicit.
+* Split the frontend gate: title/title-map/map are strict; the card game keeps its ignored K5-match test.
+* Fixed `NesPresenter::sprite_tile` to mask tile numbers to the selected 1 KiB CHR bank and wrote SMB3 object sprite palette line 4 after the NES palette upload, matching the legacy title.
+
+### Verification
+* `frontend-title`: 600/600 ticks exact.
+* `frontend-title-map`: 700/700 ticks exact.
+* `frontend-map`: 400/400 ticks exact.
+* Native headless: default/`--title` tick 30 = `4111d92eb4b1ef66`; `--map` tick 30 = `1fde8d552a39513d`; `--data sonicbros3.bin --level 1-1` remains `4f5de3aa5c2873f0`.
+* Native title?map test enters the map after Start at frames 101/103 and starts map audio.
+* Campaign/title map independence test: title hashes match with and without the campaign manifest. Existing campaign/map tests remain green.
+
+### Remaining
+* K5-match card game still placeholder/ignored. Title audio is silent because the Z80 SMPS path is not ported.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

@@ -4,7 +4,7 @@ use engine_core::animation::{SonicAnimation, TailsAnimation};
 use engine_core::audio::AudioState;
 use engine_core::collision::CollisionSets;
 use engine_core::frontend::{
-    Card, FrontendAssets, GameFlow, MapAction, MapProgress, Start, SPADE_TILE,
+    Card, FrontendAssets, GameFlow, MapAction, MapProgress, ScreenState, Start, SPADE_TILE,
 };
 use engine_core::session::Session;
 use engine_core::{vars, Ram};
@@ -31,6 +31,7 @@ pub struct CampaignRunner {
 }
 
 impl CampaignRunner {
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         archive: Archive,
@@ -41,11 +42,34 @@ impl CampaignRunner {
         world: u8,
         screen: usize,
     ) -> Result<Self, String> {
+        Self::new_with_start(
+            archive,
+            assets,
+            sets,
+            sonic,
+            tails,
+            world,
+            screen,
+            Start::Map,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_start(
+        archive: Archive,
+        assets: FrontendAssets,
+        sets: CollisionSets,
+        sonic: SonicAnimation,
+        tails: TailsAnimation,
+        world: u8,
+        screen: usize,
+        start: Start,
+    ) -> Result<Self, String> {
         let campaign = CampaignData::load(&archive)?;
         if !(1..=8).contains(&world) {
             return Err(format!("world {world} out of range (1-8)"));
         }
-        let flow = GameFlow::new_at(assets.clone(), Start::Map, world, screen);
+        let flow = GameFlow::new_at(assets.clone(), start, world, screen);
         let mut runner = Self {
             archive,
             campaign,
@@ -60,7 +84,9 @@ impl CampaignRunner {
             ticks: 0,
             last_error: None,
         };
-        runner.start_map_audio(world);
+        if matches!(start, Start::Map) {
+            runner.start_map_audio(world);
+        }
         Ok(runner)
     }
 
@@ -167,6 +193,9 @@ impl CampaignRunner {
             audio.update(&mut self.map_ram);
         }
         let action = self.flow.step(buttons);
+        if matches!(self.flow.screen, ScreenState::Map(_)) && self.map_audio.is_none() {
+            self.start_map_audio(self.flow.progress.world as u8);
+        }
         let result = match action {
             Some(MapAction::StartArea { act }) => self.start_area(act),
             Some(MapAction::StartZone { zone, act }) => self.start_zone(zone, act),
@@ -239,6 +268,9 @@ impl CampaignRunner {
             let (zone, act) = s.current_act();
             return format!("level zone ${zone:02X} act {act} tick {}", s.ticks);
         }
+        if matches!(self.flow.screen, ScreenState::Title(_)) {
+            return "title".to_string();
+        }
         let p = &self.flow.progress;
         format!(
             "map world {} screen {} tile {} lives {} cards {}",
@@ -270,6 +302,20 @@ mod tests {
         CampaignRunner::new(archive, assets, sets, sonic, tails, 1, 0).ok()
     }
 
+    fn runner_with_start(start: Start) -> Option<CampaignRunner> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web-data/campaign.bin");
+        if !path.exists() {
+            eprintln!("skip: campaign.bin not present");
+            return None;
+        }
+        let archive = Archive::open(&path).ok()?;
+        let assets = rom_assets::load_frontend_assets(&archive).ok()?;
+        let sets = rom_assets::load_collision_sets(&archive).ok()?;
+        let sonic = rom_assets::load_sonic_animation(&archive).ok()?;
+        let tails = rom_assets::load_tails_animation(&archive).ok()?;
+        CampaignRunner::new_with_start(archive, assets, sets, sonic, tails, 1, 0, start).ok()
+    }
+
     #[test]
     fn map_music_is_non_silent() {
         let Some(mut runner) = runner() else { return };
@@ -296,5 +342,21 @@ mod tests {
         runner.step(0);
         assert!(runner.session.is_none(), "the level exited");
         assert!(runner.flow.progress.lives > 0);
+    }
+    #[test]
+    fn title_start_enters_the_world_map_after_start() {
+        let Some(mut runner) = runner_with_start(Start::Title) else {
+            return;
+        };
+        for frame in 1..=200u32 {
+            let buttons = if frame == 101 || frame == 103 {
+                0x80
+            } else {
+                0
+            };
+            runner.step(buttons);
+        }
+        assert!(matches!(runner.flow.screen, ScreenState::Map(_)));
+        assert!(runner.map_audio.is_some());
     }
 }

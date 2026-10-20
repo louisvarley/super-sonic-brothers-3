@@ -9,6 +9,7 @@
 use super::assets::FrontendAssets;
 use super::map_data::{world_start_tile, CampaignMap, MapArea, MapWorld};
 use super::nes::{NesPpu, NesPresenter, SpriteKit};
+use super::title::{TitleAction, TitleScreen};
 use crate::vdp::Vdp;
 use crate::{vars, Ram};
 use sha2::{Digest, Sha256};
@@ -236,6 +237,11 @@ impl GameFlow {
         Self::new_at(assets, start, 1, 0)
     }
 
+    /// The boot flow: the SMB3 title, then the World 1 map.
+    pub fn new_default(assets: FrontendAssets) -> Self {
+        Self::new(assets, Start::Title)
+    }
+
     /// Starts a flow at a world/screen, as `--world`/`--map-screen` do.
     pub fn new_at(assets: FrontendAssets, start: Start, world: u8, map_screen: usize) -> Self {
         let mut progress = MapProgress::default();
@@ -286,7 +292,24 @@ impl GameFlow {
     pub fn step(&mut self, buttons: u8) -> Option<MapAction> {
         let mut action = None;
         match &mut self.screen {
-            ScreenState::Title(s) => s.step(&self.assets, buttons),
+            ScreenState::Title(s) => {
+                s.step(&self.assets, buttons);
+                match s.take_action() {
+                    Some(TitleAction::StartGame) => {
+                        self.progress = MapProgress::default();
+                        self.screen = ScreenState::Map(MapScreen::with_campaign(
+                            &self.assets,
+                            self.progress.clone(),
+                            true,
+                            self.assets.campaign.clone(),
+                        ));
+                    }
+                    Some(TitleAction::BackToTitle) => {
+                        self.screen = ScreenState::Title(TitleScreen::new(&self.assets));
+                    }
+                    None => {}
+                }
+            }
             ScreenState::Map(s) => {
                 s.step(&self.assets, buttons);
                 self.progress = s.progress.clone();
@@ -364,31 +387,6 @@ impl GameFlow {
     }
 }
 
-// Placeholder screen definitions filled below.
-pub struct TitleScreen {
-    pub ctx: FrontContext,
-    phase: u8,
-    frames: u32,
-}
-impl TitleScreen {
-    pub fn new(a: &FrontendAssets) -> Self {
-        Self {
-            ctx: FrontContext::new(a.clone()),
-            phase: 0,
-            frames: 0,
-        }
-    }
-    pub fn step(&mut self, _a: &FrontendAssets, _b: u8) {
-        self.frames += 1;
-    }
-    pub fn render_hash(&mut self, v: &mut Vdp, _a: &FrontendAssets) -> u64 {
-        self.ctx.render_hash(v, &|_| Some(0), &|_| Some(0))
-    }
-
-    pub fn render_rgba(&mut self, v: &mut Vdp) -> Vec<u8> {
-        self.ctx.render_rgba(v, &|_| Some(0), &|_| Some(0))
-    }
-}
 pub struct MatchScreen {
     pub ctx: FrontContext,
     progress: MapProgress,

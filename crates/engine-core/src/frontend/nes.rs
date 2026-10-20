@@ -145,8 +145,9 @@ impl<'a> NesPresenter<'a> {
     }
     pub fn sprite_tile(&mut self, tile: u8, pal: usize) -> usize {
         let top = (tile & 0xFE) as usize;
-        let bank = self.sprite_banks[top >> 6];
-        let key = (-1 - bank as i16, top, pal);
+        let bank = self.sprite_banks[(top >> 6) & 3];
+        let local = top & 63;
+        let key = (-1 - bank as i16, local, pal);
         if let Some(t) = self.cache.get(&key) {
             return *t;
         }
@@ -156,13 +157,13 @@ impl<'a> NesPresenter<'a> {
         }
         let t = self.next;
         self.next += 2;
-        for (k, tt) in [top, top + 1].iter().enumerate() {
+        for k in 0..2 {
             let md = convert(
                 self.assets,
                 bank,
-                *tt,
+                local + k,
                 pal,
-                self.overrides.get(&(bank, *tt)),
+                self.overrides.get(&(bank, local + k)),
             );
             self.vram[(t + k) * 32..(t + k) * 32 + 32].copy_from_slice(&md);
         }

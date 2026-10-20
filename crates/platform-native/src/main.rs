@@ -8,6 +8,7 @@ mod audio;
 mod campaign;
 
 use campaign::CampaignRunner;
+use engine_core::frontend::Start;
 use engine_core::session::Session;
 use minifb::{Key, Scale, Window, WindowOptions};
 use rom_assets::{
@@ -124,6 +125,7 @@ fn parse_args() -> Options {
                 level_explicit = true;
             }
             "--map" => map = true,
+            "--title" => map = false,
             "--world" => {
                 i += 1;
                 world = args
@@ -332,14 +334,20 @@ fn main() {
             Some(area) if area.world != 0 => (area.world, area.screen as usize),
             _ => (opts.world, opts.map_screen),
         };
-        let mut runner =
-            match CampaignRunner::new(archive, assets, sets, sonic, tails, world, screen) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("campaign setup: {e}");
-                    std::process::exit(1);
-                }
-            };
+        let start = if opts.campaign_act.is_some() || opts.map {
+            Start::Map
+        } else {
+            Start::Title
+        };
+        let mut runner = match CampaignRunner::new_with_start(
+            archive, assets, sets, sonic, tails, world, screen, start,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("campaign setup: {e}");
+                std::process::exit(1);
+            }
+        };
         if let Some(act) = opts.campaign_act {
             if let Err(e) = runner.start_act(act) {
                 eprintln!("campaign act {act}: {e}");

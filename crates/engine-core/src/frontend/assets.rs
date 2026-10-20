@@ -40,6 +40,10 @@ impl FrontendAssets {
     pub fn prg_word(&self, bank: u8, address: usize) -> u16 {
         u16::from_be_bytes([self.prg(bank, address), self.prg(bank, address + 1)])
     }
+    /// SMB3 assembler tables are little-endian (PrgWord in Smb3Assets).
+    pub fn prg_word_le(&self, bank: u8, address: usize) -> u16 {
+        u16::from_le_bytes([self.prg(bank, address), self.prg(bank, address + 1)])
+    }
     pub fn chr(&self, bank: u8, tile: usize) -> &[u8] {
         self.chr
             .get(&bank)

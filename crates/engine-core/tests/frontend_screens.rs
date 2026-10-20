@@ -1,4 +1,7 @@
 //! Phase 2 M5c: SMB3 front-end framebuffer hashes.
+//!
+//! Title, title→map and map are the strict gate. The card game is still the K5-match placeholder and keeps its own
+//! ignored test until it is ported.
 use engine_core::frontend::{GameFlow, Start};
 use golden_trace::{compare_masked, CompareMask, Entity, Tick, Trace};
 use rom_assets::{load_frontend_assets, Archive};
@@ -81,9 +84,8 @@ fn tick(n: u32, hash: u64, regions: usize) -> Tick {
         screen_hash: hash,
     }
 }
-#[test]
-#[ignore = "M5c partial: world map 400/400 exact; title/title-map/match still diverge at tick 30 (K5). Run with --ignored."]
-fn frontend_framebuffer_hashes_match() {
+
+fn run_cases(cases: &[(&str, Start, &str)]) {
     let r = root();
     let ap = r.join("sonicbros3.bin");
     if !ap.exists() {
@@ -92,12 +94,6 @@ fn frontend_framebuffer_hashes_match() {
     }
     let archive = Archive::open(&ap).unwrap();
     let assets = load_frontend_assets(&archive).unwrap();
-    let cases: &[(&str, Start, &str)] = &[
-        ("frontend-title", Start::Title, ""),
-        ("frontend-title-map", Start::Title, "title"),
-        ("frontend-map", Start::Map, ""),
-        ("frontend-match", Start::Match, ""),
-    ];
     let mut failures = Vec::new();
     for (name, start, script) in cases {
         let path = r.join(format!("tests/golden/{name}.sb3g.gz"));
@@ -143,4 +139,19 @@ fn frontend_framebuffer_hashes_match() {
         "frontend diverged: {}",
         failures.join(", ")
     );
+}
+
+#[test]
+fn title_and_map_framebuffer_hashes_match() {
+    run_cases(&[
+        ("frontend-title", Start::Title, ""),
+        ("frontend-title-map", Start::Title, "title"),
+        ("frontend-map", Start::Map, ""),
+    ]);
+}
+
+#[test]
+#[ignore = "K5-match: the card game is still the placeholder; run with --ignored to see its divergence."]
+fn match_framebuffer_hashes_match() {
+    run_cases(&[("frontend-match", Start::Match, "")]);
 }
