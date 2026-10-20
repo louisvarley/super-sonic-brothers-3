@@ -40,16 +40,15 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **reproduction** | `sonic-mz-3-boss-playing`: debug start `6656,700`. The first tick has camera y 604. |
 | **port status** | Reproduced: `Camera::run_level_events` calls only `zone_events`, and `World::new_at` sets `CameraMaxYPos` afterwards. `act_end_motion` matches. **Not fixed.** |
 
-## M5a software renderer: partial framebuffer parity (port gap, not a legacy bug)
+## M5a software renderer (closed)
 
 | | |
 |---|---|
 | **id** | K4 |
 | **file/function** | `engine-core::{vdp,background_plane,animated_tiles,plc,sprite_builder,hud}` and `Session::render`; the legacy oracle is `Runtime/Vdp.cs` + `GoldenTrace`'s 30-tick `screenHash`. |
-| **state** | The renderer, VRAM composition, HUD, DPLC, Tails' tails, dust, monitor contents/monitor animation, animal/points, Motobug/Chopper/Buzz Bomber animation, and the five hardware-priority planes are implemented. **15 of the 24 required level traces match all 240 framebuffer hashes (600 ticks, every 30).** The remaining traces diverge only in sprite/effect areas; backgrounds, HUD, palette and scrolling match up to the first listed tick. |
-| **open divergences** | `smb3-1-1-right` t600 and `smb3-1-3-right` t600: Game Over slide (`$39`) timing/text, which currently uses `Display` without the PLC wait and the two-half frame/position timing. `smb3-1-1-jump` t450: a later effect sprite. `smb3-1-3-spindash` t120: the block-break/points effect sprite. `sonic-ehz-1-{right,jump,spindash}` t180/t150/t120: Tails/effect object animation (Tails' fields are outside MOTION, so the logic gate does not cover it). `sonic-ghz-1-jump` t240: Chopper's animated frame plus a second effect sprite. `sonic-ghz-1-spindash` t150, `sonic-mz-1-{right,jump,spindash}` t300/t210/t330: zone object/effect animation and DPLC art not reached by idle/right. |
-| **reproduction** | `cargo test -p engine-core --test render_motion -- --ignored --nocapture`. The test compares with `{ram:false, regions:false, screen:true, tails:false}` and asserts no divergence, so it fails until every listed sprite/effect is ported. It is `#[ignore]`d by default only so the rest of the workspace stays green; it is not weakened. |
-| **status** | **Open (M5a partial).** The assertion has not been weakened or split; the exact first hashes are printed above. |
+| **state** | **Closed.** All 24 required level traces match all 240 framebuffer hashes (600 ticks, every 30): SMB3 1-1/1-2/1-3 and Sonic EHZ/GHZ/MZ act 1, each idle/right/jump/spindash. |
+| **reproduction** | `cargo test -p engine-core --test render_motion -- --nocapture` (not ignored). |
+| **closing fixes** | Game Over `$39` waits for PLC 3 and spawns both halves from the player check; explosions animate on their spawn tick (needed by the frozen 1-3 spindash screen); Buzz Bomber/missile, Masher, Buzzer, Coconuts, Chopper and lost-rings animation blocks were wired in; dust skid puffs spawn; EHZ's near-hills background advances once per five-line band. |
 
 ## Suspected, to confirm during Phase 1/2
 

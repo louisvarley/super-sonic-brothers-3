@@ -1850,10 +1850,12 @@ fn buzz_wait(ram: &mut Ram, o: Obj) {
         }
         o.set_byte(ram, 0x34, 1);
         o.set_word(ram, 0x32, 0x3B);
+        o.set_anim(ram, 2);
         return;
     }
     o.set_routine_secondary(ram, 2);
     o.set_word(ram, 0x32, 0x7F);
+    o.set_anim(ram, 1);
     o.set_x_vel(
         ram,
         if o.status(ram) & XFLIP != 0 {
@@ -1873,6 +1875,7 @@ fn buzz_fly(ram: &mut Ram, o: Obj) {
         o.set_word(ram, 0x32, 0x3B);
         o.set_routine_secondary(ram, 0);
         o.set_x_vel(ram, 0);
+        o.set_anim(ram, 0);
         return;
     }
     move_object(ram, o);
@@ -1888,18 +1891,31 @@ fn buzz_fly(ram: &mut Ram, o: Obj) {
     o.set_word(ram, 0x32, 0x1D);
     o.set_routine_secondary(ram, 0);
     o.set_x_vel(ram, 0);
+    o.set_anim(ram, 0);
 }
 
-pub fn missile(ram: &mut Ram, o: Obj) {
+pub fn missile(ram: &mut Ram, o: Obj, animations: &[u8]) {
     match o.routine(ram) {
         0 => {
             let t = o.word(ram, 0x32).wrapping_sub(1);
             o.set_word(ram, 0x32, t);
             if (t as i16) >= 0 {
+                check_missile_owner(ram, o);
                 return;
             }
             o.set_routine(ram, 2);
             o.set_mappings(ram, 0x151ED4);
+            let zone = ram.u8(vars::CURRENT_ZONE_AND_ACT);
+            o.set_art_tile(
+                ram,
+                if zone < 0x13 {
+                    0x2406
+                } else if zone < 0x15 {
+                    0x2298
+                } else {
+                    0x253D
+                },
+            );
             o.set_render_flags(ram, LEVEL_COORDS);
             o.set_priority(ram, 3);
             o.set_width_pixels(ram, 8);
@@ -1907,25 +1923,27 @@ pub fn missile(ram: &mut Ram, o: Obj) {
             if o.subtype(ram) != 0 {
                 o.set_routine(ram, 8);
                 o.set_collision_flags(ram, 0x87);
+                o.set_anim(ram, 1);
+                sprites::animate_object(ram, o, animations);
+                sprites::display_sprite(ram, o);
+                return;
             }
+            missile_flare(ram, o, animations);
         }
-        2 => {
-            // The flare animation would advance to Flying; without art, go straight to the flying phase.
-            o.set_routine(ram, 4);
-            o.set_collision_flags(ram, 0x87);
-        }
+        2 => missile_flare(ram, o, animations),
         4 => {
             if o.status(ram) & 0x80 != 0 {
                 delete_object(ram, o);
                 return;
             }
             o.set_collision_flags(ram, 0x87);
+            o.set_anim(ram, 1);
             move_object(ram, o);
+            sprites::animate_object(ram, o, animations);
+            sprites::display_sprite(ram, o);
             if ram.u16(vars::CAMERA_MAX_Y_POS).wrapping_add(0xE0) < o.y(ram) {
                 delete_object(ram, o);
-                return;
             }
-            sprites::display_sprite(ram, o);
         }
         8 => {
             if !o.on_screen(ram) {
@@ -1933,9 +1951,23 @@ pub fn missile(ram: &mut Ram, o: Obj) {
                 return;
             }
             move_object(ram, o);
+            sprites::animate_object(ram, o, animations);
             sprites::display_sprite(ram, o);
         }
         _ => delete_object(ram, o),
+    }
+}
+
+fn missile_flare(ram: &mut Ram, o: Obj, animations: &[u8]) {
+    check_missile_owner(ram, o);
+    sprites::animate_object(ram, o, animations);
+    sprites::display_sprite(ram, o);
+}
+
+fn check_missile_owner(ram: &mut Ram, o: Obj) {
+    let owner = (o.long(ram, 0x3C) & 0xFFFF) as u16;
+    if ram.u8(owner) == crate::objects::common_ids::EXPLOSION {
+        delete_object(ram, o);
     }
 }
 

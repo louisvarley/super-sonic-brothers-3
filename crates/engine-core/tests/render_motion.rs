@@ -1,8 +1,7 @@
 //! Phase 2 M5a: the software VDP framebuffer hash against the legacy traces.
 //!
-//! This is a strict gate and is `#[ignore]`d until M5b finishes the remaining effect/Game Over sprites: 15 of 24
-//! traces already match every 30-tick hash. Run it with:
-//!   cargo test -p engine-core --test render_motion -- --ignored --nocapture
+//! All 24 required level traces must match every 30-tick framebuffer hash. Run it with:
+//!   cargo test -p engine-core --test render_motion -- --nocapture
 
 use engine_core::session::Session;
 use engine_core::vars;
@@ -172,7 +171,6 @@ fn replay(
 }
 
 #[test]
-#[ignore = "M5a partial: 15/24 level traces match every framebuffer hash; 9 await effect/Game Over sprite work (K4). Run with --ignored."]
 fn level_framebuffer_hashes_match_the_legacy_traces() {
     let root = repo_root();
     let archive_path = root.join("sonicbros3.bin");

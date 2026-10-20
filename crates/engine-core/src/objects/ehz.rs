@@ -28,7 +28,7 @@ fn sbyte(v: u8) -> i32 {
 const BUZZER_ART: u16 = 0x3D2;
 const BUZZER_MAPPINGS: u32 = 0x3154E;
 
-pub fn buzzer(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
+pub fn buzzer(ram: &mut Ram, o: Obj, animations: &[u8]) -> Result<(), Unported> {
     match o.routine(ram) {
         0 => {
             o.set_mappings(ram, BUZZER_MAPPINGS);
@@ -66,6 +66,7 @@ pub fn buzzer(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
             } else {
                 shoot(ram, o);
             }
+            sprites::animate_object(ram, o, animations);
             display_or_mark_gone(ram, o);
         }
         4 => {
@@ -82,10 +83,12 @@ pub fn buzzer(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
             o.set_y(ram, bee.y(ram));
             o.set_status(ram, bee.status(ram));
             o.set_render_flags(ram, bee.render_flags(ram));
+            sprites::animate_object(ram, o, animations);
             display_or_mark_gone(ram, o);
         }
         6 => {
             move_object(ram, o);
+            sprites::animate_object(ram, o, animations);
             display_or_mark_gone(ram, o);
         }
         _ => {}
@@ -182,7 +185,7 @@ fn shoot(ram: &mut Ram, o: Obj) {
 
 // ------------------------------------------------------------------ Masher ($5C)
 
-pub fn masher(ram: &mut Ram, o: Obj) {
+pub fn masher(ram: &mut Ram, o: Obj, animations: &[u8]) {
     if o.routine(ram) == 0 {
         o.set_routine(ram, 2);
         o.set_mappings(ram, 0x316A6);
@@ -194,6 +197,7 @@ pub fn masher(ram: &mut Ram, o: Obj) {
         o.set_y_vel(ram, -0x400);
         o.set_word(ram, 0x30, o.y(ram));
     }
+    sprites::animate_object(ram, o, animations);
     let start_y = o.word(ram, 0x30);
     move_object(ram, o);
     o.set_y_vel(ram, o.y_vel(ram).wrapping_add(0x18));
@@ -202,9 +206,9 @@ pub fn masher(ram: &mut Ram, o: Obj) {
         o.set_y_vel(ram, -0x500);
     }
     if start_y.wrapping_sub(0xC0) < o.y(ram) {
-        o.set_anim(ram, 1);
-    } else {
         o.set_anim(ram, if o.y_vel(ram) >= 0 { 2 } else { 0 });
+    } else {
+        o.set_anim(ram, 1);
     }
     display_or_mark_gone(ram, o);
 }
@@ -235,7 +239,7 @@ fn load_sub_object(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
     Ok(())
 }
 
-pub fn coconuts(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
+pub fn coconuts(ram: &mut Ram, o: Obj, animations: &[u8]) -> Result<(), Unported> {
     match o.routine(ram) {
         0 => {
             load_sub_object(ram, o)?;
@@ -251,6 +255,7 @@ pub fn coconuts(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
                 o.set_byte(ram, 0x2A, 0x10);
             } else {
                 move_object(ram, o);
+                sprites::animate_object(ram, o, animations);
             }
         }
         6 => {

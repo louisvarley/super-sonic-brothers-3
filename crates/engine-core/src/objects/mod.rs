@@ -89,6 +89,16 @@ pub struct Objects {
     pub motobug_animations: Vec<u8>,
     /// Chopper's animation scripts.
     pub chopper_animations: Vec<u8>,
+    /// Coconuts' animation scripts.
+    pub coconuts_animations: Vec<u8>,
+    /// Buzz Bomber missile's animation scripts.
+    pub missile_animations: Vec<u8>,
+    /// Masher's animation scripts.
+    pub masher_animations: Vec<u8>,
+    /// Buzzer's animation scripts.
+    pub buzzer_animations: Vec<u8>,
+    /// Lost rings' animation scripts.
+    pub lost_rings_animations: Vec<u8>,
     /// Animal species tables (`objects/animal/animals.json`).
     pub animal_data: Option<crate::graphics::AnimalData>,
 }
@@ -120,6 +130,11 @@ impl Objects {
             monitor_frame_offsets: Vec::new(),
             motobug_animations: Vec::new(),
             chopper_animations: Vec::new(),
+            coconuts_animations: Vec::new(),
+            missile_animations: Vec::new(),
+            masher_animations: Vec::new(),
+            buzzer_animations: Vec::new(),
+            lost_rings_animations: Vec::new(),
             animal_data: None,
         }
     }
@@ -244,7 +259,7 @@ impl Objects {
             0x1C => ghz_mz::scenery(ram, o)?,
             0x1F => ghz_mz::crabmeat(ram, sets, o)?,
             0x22 => boss::buzz_bomber(ram, o, &self.buzz_animations),
-            0x23 => boss::missile(ram, o),
+            0x23 => boss::missile(ram, o, &self.missile_animations),
             0x26 => ehz::monitor(ram, sets, o, &self.monitor_animations)?,
             0x2B => ghz_mz::chopper(ram, o, &self.chopper_animations),
             0x2E => ehz::monitor_contents(ram, o, &self.monitor_frame_offsets)?,
@@ -294,7 +309,9 @@ impl Objects {
             ids::BOOMERANG_BRO => smb3::boomerang_bro(ram, sets, o),
             ids::BOOMERANG => smb3::boomerang(ram, o),
             ids::GOAL_TEXT => {}
-            common_ids::LOST_RINGS => common::lost_rings(ram, sets, o, self.slot_counter),
+            common_ids::LOST_RINGS => {
+                common::lost_rings(ram, sets, o, self.slot_counter, &self.lost_rings_animations)
+            }
             common_ids::EXPLOSION => common::explosion(ram, o),
             common_ids::ANIMAL => common::animal(ram, sets, o, self.animal_data.as_ref()),
             common_ids::POINTS => common::points(ram, o),
@@ -348,15 +365,17 @@ impl Objects {
             0x3E => actend::egg_prison(ram, sets, o)?,
             0x41 => ehz::spring(ram, sets, o, self.spring_slopes.as_ref())?,
             0x49 => ehz::waterfall(ram, o),
-            0x4B => ehz::buzzer(ram, o)?,
+            0x4B => ehz::buzzer(ram, o, &self.buzzer_animations)?,
             0x56 => boss::ehz_boss(ram, sets, o)?,
-            0x5C => ehz::masher(ram, o),
+            0x5C => ehz::masher(ram, o, &self.masher_animations),
             0x79 => actend::starpost(ram, o),
             0x98 => ehz::coconut(ram, o)?,
-            0x9D => ehz::coconuts(ram, o)?,
+            0x9D => ehz::coconuts(ram, o, &self.coconuts_animations)?,
             0xDD => actend::giant_ring(ram, o),
             0xDE => actend::giant_ring_flash(ram, o),
-            common_ids::LOST_RINGS => common::lost_rings(ram, sets, o, self.slot_counter),
+            common_ids::LOST_RINGS => {
+                common::lost_rings(ram, sets, o, self.slot_counter, &self.lost_rings_animations)
+            }
             common_ids::EXPLOSION => common::explosion(ram, o),
             common_ids::ANIMAL => common::animal(ram, sets, o, self.animal_data.as_ref()),
             common_ids::POINTS => common::points(ram, o),

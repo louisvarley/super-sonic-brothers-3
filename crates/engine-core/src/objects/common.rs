@@ -23,7 +23,13 @@ const MAX_RINGS: i32 = 32;
 const GRAVITY: i16 = 0x18;
 
 /// `LostRings` (0x14F78): the rings a hurt player drops.
-pub fn lost_rings(ram: &mut Ram, sets: &CollisionSets, o: Obj, slot_counter: i32) {
+pub fn lost_rings(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    slot_counter: i32,
+    animations: &[u8],
+) {
     match o.routine(ram) {
         0 => {
             scatter_rings(ram, o);
@@ -35,12 +41,12 @@ pub fn lost_rings(ram: &mut Ram, sets: &CollisionSets, o: Obj, slot_counter: i32
             o.set_collision_flags(ram, 0);
             o.set_priority(ram, 1);
             touch::collect_ring_for(ram, is_tails(ram, o));
-            // The legacy falls through into Sparkle to display the first sparkle frame.
+            // The legacy falls through into Sparkle to animate/display the first sparkle frame.
+            sprites::animate_object(ram, o, animations);
             sprites::display_sprite(ram, o);
         }
         SPARKLE => {
-            // ObjectKit.Animate overwrites the mapping frame from the shared spill animation; only the frame matters.
-            o.set_mapping_frame(ram, ram.u8(vars::RING_SPILL_ANIM_FRAME));
+            sprites::animate_object(ram, o, animations);
             sprites::display_sprite(ram, o);
         }
         GONE => delete_object(ram, o),
@@ -189,23 +195,29 @@ pub fn explosion(ram: &mut Ram, o: Obj) {
                 animal.set_word(ram, 0x3E, o.word(ram, 0x3E));
             }
             init_explosion(ram, o);
+            animate_explosion(ram, o);
         }
-        2 => init_explosion(ram, o),
-        COLLECTED => {
-            let d = o.anim_frame_duration(ram).wrapping_sub(1);
-            o.set_anim_frame_duration(ram, d);
-            if (d as i8) < 0 {
-                o.set_anim_frame_duration(ram, 7);
-                o.set_mapping_frame(ram, o.mapping_frame(ram).wrapping_add(1));
-                if o.mapping_frame(ram) == 5 {
-                    delete_object(ram, o);
-                    return;
-                }
-            }
-            sprites::display_sprite(ram, o);
+        2 => {
+            init_explosion(ram, o);
+            animate_explosion(ram, o);
         }
+        COLLECTED => animate_explosion(ram, o),
         _ => {}
     }
+}
+
+fn animate_explosion(ram: &mut Ram, o: Obj) {
+    let d = o.anim_frame_duration(ram).wrapping_sub(1);
+    o.set_anim_frame_duration(ram, d);
+    if (d as i8) < 0 {
+        o.set_anim_frame_duration(ram, 7);
+        o.set_mapping_frame(ram, o.mapping_frame(ram).wrapping_add(1));
+        if o.mapping_frame(ram) == 5 {
+            delete_object(ram, o);
+            return;
+        }
+    }
+    sprites::display_sprite(ram, o);
 }
 
 fn init_explosion(ram: &mut Ram, o: Obj) {

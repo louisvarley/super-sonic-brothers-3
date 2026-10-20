@@ -112,8 +112,33 @@ fn skid(ram: &mut Ram, o: Obj) {
     o.set_byte(ram, 0x32, t);
     if (t as i8) < 0 {
         o.set_byte(ram, 0x32, 3);
-        // The puff spawn goes into a free dynamic slot; the original's slot search is not needed for the
-        // effect slots themselves and is left to the object manager's normal spawn path.
+        if let Some(puff) = crate::objects::find_free_slot(ram) {
+            puff.set_id(ram, 0x08);
+            puff.set_x(ram, player.x(ram));
+            let mut y = player.y(ram).wrapping_add(0x10);
+            if o.byte(ram, 0x34) != 0 {
+                y = y.wrapping_sub(4);
+                puff.set_byte(ram, 0x34, 1);
+            }
+            puff.set_y(ram, y);
+            puff.set_status(ram, 0);
+            puff.set_anim(ram, ANIM_SKID);
+            puff.set_routine(ram, MAIN);
+            puff.set_mappings(ram, o.mappings(ram));
+            puff.set_render_flags(ram, o.render_flags(ram));
+            puff.set_priority(ram, 1);
+            puff.set_width_pixels(ram, 4);
+            let art = o.art_tile(ram) & 0x7FFF;
+            puff.set_art_tile(
+                ram,
+                if (player.art_tile(ram) as i16) < 0 {
+                    art | 0x8000
+                } else {
+                    art
+                },
+            );
+            puff.set_word(ram, 0x3E, o.word(ram, 0x3E));
+        }
     }
 }
 

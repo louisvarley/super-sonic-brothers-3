@@ -503,6 +503,22 @@ The SMB3 goal traces must be generated with `--zone`/`--act` rather than `--leve
   --all-targets -- -D warnings` clean.
 * The new render gate intentionally still fails (assertion unchanged) until K4 is closed.
 
+## 2026-10-20 - Phase 2 M5b: all 24 level framebuffer traces exact (K4 closed)
+
+### Fixes (all against the legacy oracle)
+* Game Over `$39`: the player check now spawns GAME/OVER in slots `$B080/$B0C0`, sets OVER's odd frame, queues PLC 3, and the handler waits for the PLC buffer before the 16 px slide; the first half runs the `$2D0` wait/end path.
+* Explosion `$27`: the spawn/init tick now falls through into the animating routine (legacy `goto case`), which also fixes the frozen SMB3 1-3 spindash screen.
+* Animated sprites/DPLC: wired Buzz Bomber `$22`, missile `$23`, Masher `$5C`, Buzzer `$4B`, Coconuts `$9D`, Chopper `$2B` and Motobug `$40` animation blocks. Chopper/Masher animate **before** assigning the new `Anim` (the legacy order that keeps their mapping frame in step).
+* Dust `$08`: implemented the skid emitter's puff spawns; Tails' dust art/frame now reaches the SAT through the skid puffs.
+* Lost rings `$37`: the sparkle routine now runs its own animation block instead of copying `RingSpillAnimFrame` directly.
+* Emerald Hill background: the near-hills perspective writes five equal lines per band and advances the 16.16 accumulator once per band, not once per line.
+* Animal/points and monitor contents/DPLC wiring from M5a completes the remaining effect art.
+
+### Verification
+* `cargo test -p engine-core --test render_motion -- --nocapture`: **24/24** traces, 240/240 hashes each, no divergence; the gate is no longer `#[ignore]`d.
+* `cargo test --workspace`: 68 engine-core unit tests, all motion tests (including the render gate), 2 golden-trace and the rom-assets tests pass.
+* `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

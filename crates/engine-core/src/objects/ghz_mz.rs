@@ -630,6 +630,7 @@ pub fn chopper(ram: &mut Ram, o: Obj, animations: &[u8]) {
         o.set_y_vel(ram, -0x700);
         o.set_word(ram, 0x30, o.y(ram));
     }
+    sprites::animate_object(ram, o, animations);
     let start_y = o.word(ram, 0x30);
     move_object(ram, o);
     o.set_y_vel(ram, o.y_vel(ram).wrapping_add(0x18));
@@ -641,7 +642,6 @@ pub fn chopper(ram: &mut Ram, o: Obj, animations: &[u8]) {
     if start_y.wrapping_sub(0xC0) < o.y(ram) {
         o.set_anim(ram, if o.y_vel(ram) >= 0 { 2 } else { 0 });
     }
-    sprites::animate_object(ram, o, animations);
     display_or_mark_gone(ram, o);
 }
 

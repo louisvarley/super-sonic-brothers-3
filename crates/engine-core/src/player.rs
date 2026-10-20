@@ -377,8 +377,14 @@ impl Player {
         );
         ram.w8(vars::LIFE_COUNT, ram.u8(vars::LIFE_COUNT).wrapping_sub(1));
         if ram.u8(vars::LIFE_COUNT) == 0 {
-            // 0x1F022: no restart; the game-over objects take over. Their slots, the music and the PLC are M4+.
+            // 0x1F022: no restart; the game-over objects take over.
             self.set_restart_timer(ram, 0);
+            let game = Obj::new(vars::TITLE_CARD_ZONE_NAME);
+            let over = Obj::new(vars::TITLE_CARD_ZONE);
+            game.set_id(ram, 0x39);
+            over.set_id(ram, 0x39);
+            over.set_mapping_frame(ram, 1);
+            game.set_word(ram, 0x3E, o.address());
             ram.w8(vars::TIME_OVER_FLAG, 0);
             ram.w8(vars::UPDATE_HUD_TIMER, 0);
             ram.w8(vars::UPDATE_HUD_TIMER_P2, 0);

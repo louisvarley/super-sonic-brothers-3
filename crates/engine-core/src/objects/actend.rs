@@ -895,6 +895,9 @@ fn run_egg_wait(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
 pub fn game_over(ram: &mut Ram, o: Obj) {
     match o.routine(ram) {
         0 => {
+            if ram.u32(vars::PLC_BUFFER) != 0 {
+                return;
+            }
             o.set_routine(ram, 2);
             o.set_x(
                 ram,

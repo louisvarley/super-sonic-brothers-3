@@ -39,6 +39,7 @@ pub struct Session {
     sonic_dplc: u8,
     tails_dplc: u8,
     tails_tails_dplc: u8,
+    game_over_plc_loaded: bool,
     pub vdp: Vdp,
     /// Frames stepped (the trace's `tick` before the current call).
     pub ticks: u32,
@@ -92,6 +93,21 @@ impl Session {
         if let Some(d) = graphics.bank.table(0x152314) {
             world.objects.chopper_animations = d.animations.clone();
         }
+        if let Some(d) = graphics.bank.table(0x3BF94) {
+            world.objects.coconuts_animations = d.animations.clone();
+        }
+        if let Some(d) = graphics.bank.table(0x151ED4) {
+            world.objects.missile_animations = d.animations.clone();
+        }
+        if let Some(d) = graphics.bank.table(0x316A6) {
+            world.objects.masher_animations = d.animations.clone();
+        }
+        if let Some(d) = graphics.bank.table(0x3154E) {
+            world.objects.buzzer_animations = d.animations.clone();
+        }
+        if let Some(d) = graphics.bank.table(0x152C4) {
+            world.objects.lost_rings_animations = d.animations.clone();
+        }
         world.objects.animal_data = Some(graphics.animals.clone());
         if let Some(d) = graphics.bank.table(0x151C88) {
             world.objects.buzz_animations = d.animations.clone();
@@ -122,6 +138,7 @@ impl Session {
             sonic_dplc: 0xFF,
             tails_dplc: 0xFF,
             tails_tails_dplc: 0xFF,
+            game_over_plc_loaded: false,
             vdp: Vdp::new(),
             ticks: 0,
             stopped: None,
@@ -180,6 +197,17 @@ impl Session {
             )?;
         }
         self.update_player_vram();
+        if !self.game_over_plc_loaded
+            && Obj::new(vars::TITLE_CARD_ZONE_NAME).id(&self.world.ram) == 0x39
+        {
+            self.plc.load(
+                &mut self.world.ram,
+                &mut self.vram,
+                &self.graphics.plc_lists,
+                3,
+            );
+            self.game_over_plc_loaded = true;
+        }
         self.world
             .objects
             .run_after_players(&mut self.world.ram, &self.sets, dying)?;
@@ -256,6 +284,21 @@ impl Session {
         if let Some(d) = self.graphics.bank.table(0x152314) {
             self.world.objects.chopper_animations = d.animations.clone();
         }
+        if let Some(d) = self.graphics.bank.table(0x3BF94) {
+            self.world.objects.coconuts_animations = d.animations.clone();
+        }
+        if let Some(d) = self.graphics.bank.table(0x151ED4) {
+            self.world.objects.missile_animations = d.animations.clone();
+        }
+        if let Some(d) = self.graphics.bank.table(0x316A6) {
+            self.world.objects.masher_animations = d.animations.clone();
+        }
+        if let Some(d) = self.graphics.bank.table(0x3154E) {
+            self.world.objects.buzzer_animations = d.animations.clone();
+        }
+        if let Some(d) = self.graphics.bank.table(0x152C4) {
+            self.world.objects.lost_rings_animations = d.animations.clone();
+        }
         self.world.objects.animal_data = Some(self.graphics.animals.clone());
         if let Some(d) = self.graphics.bank.table(0x151C88) {
             self.world.objects.buzz_animations = d.animations.clone();
@@ -277,6 +320,7 @@ impl Session {
         self.sonic_dplc = 0xFF;
         self.tails_dplc = 0xFF;
         self.tails_tails_dplc = 0xFF;
+        self.game_over_plc_loaded = false;
     }
 
     /// LoadSonicDynPLC / LoadTailsDynPLC: copy the current mapping frame's tiles into VRAM.

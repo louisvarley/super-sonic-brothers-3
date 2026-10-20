@@ -605,7 +605,7 @@ mod tests {
         let lost = Obj::new(vars::FIRST_DYNAMIC_SLOT + 0x40);
         assert_eq!(lost.id(&ram), 0x37);
         assert_eq!(lost.word(&ram, 0x3E), vars::MAIN_CHARACTER);
-        crate::objects::common::lost_rings(&mut ram, &sets, lost, 0);
+        crate::objects::common::lost_rings(&mut ram, &sets, lost, 0, &[]);
         assert_eq!(ram.u16(vars::RING_COUNT), 0);
         assert_eq!(lost.routine(&ram), 2);
     }

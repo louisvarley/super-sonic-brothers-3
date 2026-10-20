@@ -874,8 +874,8 @@ impl Camera {
         for _ in 0..=0x0E {
             for _ in 0..5 {
                 line(ram, &mut a1, fg, (acc >> 16) as u16);
-                acc = acc.wrapping_add((step as u32).wrapping_mul(3));
             }
+            acc = acc.wrapping_add((step as u32).wrapping_mul(3));
         }
     }
 
