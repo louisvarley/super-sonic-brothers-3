@@ -41,6 +41,7 @@ pub struct CampaignRunner {
     map_music: u16,
     entry: Option<EntryTransition>,
     current_act: Option<u16>,
+    force_two_player: bool,
     pub ticks: u32,
     pub last_error: Option<String>,
 }
@@ -98,6 +99,7 @@ impl CampaignRunner {
             map_music: 0x94,
             entry: None,
             current_act: None,
+            force_two_player: false,
             ticks: 0,
             last_error: None,
         };
@@ -105,6 +107,18 @@ impl CampaignRunner {
             runner.start_map_audio(world);
         }
         Ok(runner)
+    }
+
+    /// `--two-player`: keep Tails as player 2 across title/map/level changes.
+    pub fn set_two_player(&mut self, enabled: bool) {
+        self.force_two_player = enabled;
+        if enabled {
+            self.flow.progress.two_player = true;
+            if matches!(self.flow.screen, ScreenState::Map(_)) {
+                self.flow
+                    .set_progress_map(self.flow.progress.clone(), false);
+            }
+        }
     }
 
     /// Direct `--campaign-act`: mark the area's map owner, then enter it.
@@ -403,6 +417,14 @@ impl CampaignRunner {
             audio.update(&mut self.map_ram);
         }
         let action = self.flow.step(buttons);
+        if self.force_two_player
+            && matches!(self.flow.screen, ScreenState::Map(_))
+            && !self.flow.progress.two_player
+        {
+            self.flow.progress.two_player = true;
+            self.flow
+                .set_progress_map(self.flow.progress.clone(), false);
+        }
         if matches!(self.flow.screen, ScreenState::Map(_)) && self.map_audio.is_none() {
             self.start_map_audio(self.flow.progress.world as u8);
         }

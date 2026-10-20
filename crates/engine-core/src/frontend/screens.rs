@@ -1146,6 +1146,12 @@ impl MatchScreen {
         let mut nes = NesPresenter::new(&mut p.vram, &mut p.ram, &p.assets);
         nes.overrides.insert((0x5D, 0x34), glyph(&S_BADGE, 0, 0));
         nes.overrides.insert((0x5D, 0x35), glyph(&S_BADGE, 8, 0));
+        for q in 0..4 {
+            nes.overrides.insert(
+                (0x5C, 0x2E + (q & 1) + (q >> 1) * 0x10),
+                glyph(&S_RING_BACK, (q & 1) * 8, (q >> 1) * 8),
+            );
+        }
         nes.bg_banks = [0x5C, 0x5D, 0x5E, 0x5F];
         nes.sprite_banks = [0x28, 0x29, 0x5A, 0x2B];
         for row in 0..30 {
@@ -1976,6 +1982,24 @@ fn glyph(rows: &[&str], x0: usize, y0: usize) -> [u8; 64] {
     }
     p
 }
+const S_RING_BACK: [&str; 16] = [
+    "bbbbbbbbbbbbbbbb",
+    "bbbbb......bbbbb",
+    "bbb..rrrrrr..bbb",
+    "bb.rrrrrrrrrr.bb",
+    "bb.rrr....rrw.bb",
+    "b.rrr.bbbb.rrw.b",
+    "b.rr.bbbbbb.rw.b",
+    "b.rr.bbbbbb.rw.b",
+    "b.rr.bbbbbb.rw.b",
+    "b.rr.bbbbbb.rw.b",
+    "b.rrr.bbbb.rww.b",
+    "bb.rrr....rww.bb",
+    "bb.wrrrrrrrww.bb",
+    "bbb..wwwwww..bbb",
+    "bbbbb......bbbbb",
+    "bbbbbbbbbbbbbbbb",
+];
 const S_BADGE: [&str; 8] = [
     "rrrrrrrrrrrrrrrr",
     "rwwwwwwwwwwwwwwr",

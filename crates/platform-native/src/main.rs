@@ -33,6 +33,7 @@ struct Options {
     map_screen: usize,
     campaign_act: Option<u16>,
     match_game: bool,
+    two_player: bool,
     list_campaign: bool,
     scale: Scale,
     frames: Option<u32>,
@@ -87,13 +88,13 @@ fn usage() -> ! {
         "Sonic Bros. 3 (Rust port)\n\
          \n\
          Usage: sonic-bros-3 [--data web-data/campaign.bin] [--map] [--world 1-8] [--map-screen N]\n\
-         \x20      [--campaign-act N] [--match] [--level 1-1|1-2|1-3] [--zone 0xNN --act N] [--scale 1|2|4|8]\n\
+         \x20      [--campaign-act N] [--match] [--two-player] [--level 1-1|1-2|1-3] [--zone 0xNN --act N] [--scale 1|2|4|8]\n\
          \x20      [--frames N --screenshot out.png] [--mute] [--list-campaign]\n\
          \n\
          With campaign.bin and no --level/--zone, starts at the SMB3 title/curtain; press Enter at the menu to\n\
          enter the World 1 map. --map skips the title. --campaign-act enters one area directly.\n\
          Default level when using sonicbros3.bin: 1-1 (zone 0x40, act 1).\n\
-         Controls: arrows move, Z/X/C or Space = A/B/C, Enter = Start, P = pause, Esc = quit.\n\
+         Controls: P1 arrows + Z/X/C/Space/Enter; P2 (Tails) W/A/S/D + J/K/L, I = Start; P = pause, Esc = quit.\n\
          Audio: 48 kHz stereo (68k SMPS); --mute disables output."
     );
     std::process::exit(2);
@@ -109,6 +110,7 @@ fn parse_args() -> Options {
     let mut map_screen = 0usize;
     let mut campaign_act = None;
     let mut match_game = false;
+    let mut two_player = false;
     let mut list_campaign = false;
     let mut scale = Scale::X4;
     let mut frames = None;
@@ -176,6 +178,7 @@ fn parse_args() -> Options {
                 );
             }
             "--match" => match_game = true,
+            "--two-player" => two_player = true,
             "--list-campaign" => list_campaign = true,
             "--scale" => {
                 i += 1;
@@ -221,6 +224,7 @@ fn parse_args() -> Options {
         map_screen,
         campaign_act,
         match_game,
+        two_player,
         list_campaign,
         scale,
         frames,
@@ -382,6 +386,9 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        if opts.two_player {
+            runner.set_two_player(true);
+        }
         if let Some(act) = opts.campaign_act {
             if let Err(e) = runner.start_act(act) {
                 eprintln!("campaign act {act}: {e}");
