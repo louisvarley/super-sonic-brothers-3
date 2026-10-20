@@ -567,6 +567,24 @@ Next: `platform-web` (WASM + canvas + ROM file picker), then audio, the stock im
 ### Remaining
 * The Sonic-zone/title Z80 SMPS path is not ported. Gameplay SFX requests are also not yet routed to the 68k driver.
 
+## 2026-10-20 - Phase 2 M7: campaign metadata, all-world maps and area loading
+
+### Implemented
+* `rom-assets::CampaignData`/`CampaignWorld`/`CampaignArea` load `campaign/campaign.json`; ownership is filled from world entries and `CampaignArea::load_level` loads `zones/<directory>/act_1` through the new `LevelData::load_dir`.
+* `FrontendAssets` carries a map-only campaign view; `MapScreen` selects each world's map cells, palette, entry areas, paths, panels, cards and intro box. `GameFlow` can start at any world/screen and returns panel start actions.
+* Native campaign mode (`CampaignRunner`) enters panels, seeds lives/score, runs campaign `Session`s, returns to the map on death/goal, carries rings/cards, handles game over, and plays map/area 68k music.
+* New CLI: `--map`, `--world`, `--map-screen`, `--campaign-act`, `--list-campaign`; when `--data` is omitted the order is `campaign.bin` beside the exe, `web-data/campaign.bin`, `sonicbros3.bin` beside the exe, then `sonicbros3.bin` in the working directory. Direct `--level` mode is unchanged.
+
+### Verification
+* Manifest: 8 worlds, 19 screens, 257 areas (255 available, 1 failed, 1 blocked).
+* `campaign_areas`: all 255 available areas load and step 60 ticks (no panic); 172 s in a debug test.
+* `campaign_maps`: all 19 map screens render non-empty. `campaign_world1_map`: World 1 is byte-identical with/without campaign metadata for 400 ticks; `frontend-map` remains exact.
+* `campaign_map_enter`: World 1 input path reaches the 1-1 panel.
+* Native: `--map`, `--world 8 --map-screen 3`, `--campaign-act 2/255/257`, and headless hashes; map music and death-to-map are unit-tested.
+
+### Remaining
+* Source map commands, world transitions, locks, bridges, wandering enemies and world-clear bosses are adapters not yet implemented. One failed area (opcode $00 at $CFD7) and one blocked vertical area (180 rows > 128-row layout) remain. Map pipes/card game and the title/match K5 screens are still partial.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

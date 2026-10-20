@@ -7,6 +7,7 @@
     clippy::needless_range_loop
 )]
 use super::assets::FrontendAssets;
+use super::map_data::{world_start_tile, CampaignMap, MapArea, MapWorld};
 use super::nes::{NesPpu, NesPresenter, SpriteKit};
 use crate::vdp::Vdp;
 use crate::{vars, Ram};
@@ -33,6 +34,9 @@ pub struct MapProgress {
     pub cards: Vec<Card>,
     pub position: i32,
     pub last_move: i32,
+    pub deck: Option<Vec<i32>>,
+    pub deck_matches: i32,
+    pub power_ups: Vec<i32>,
 }
 impl Default for MapProgress {
     fn default() -> Self {
@@ -46,13 +50,34 @@ impl Default for MapProgress {
             cards: Vec::new(),
             position: 2 * 16 + 2,
             last_move: 0,
+            deck: None,
+            deck_matches: 0,
+            power_ups: Vec::new(),
         }
     }
 }
 impl MapProgress {
-    pub fn is_cleared(&self, tile: i32) -> bool {
-        self.cleared.contains(&tile)
+    /// A cleared panel is identified by world, screen and layout tile, as `MapProgress.PanelKey`.
+    pub fn panel_key(&self, tile: i32) -> i32 {
+        (self.world - 1) * 4096 + self.map_screen * 256 + tile
     }
+    pub fn is_cleared(&self, tile: i32) -> bool {
+        self.cleared.contains(&self.panel_key(tile))
+    }
+    pub fn clear_panel(&mut self, tile: i32) {
+        let key = self.panel_key(tile);
+        if !self.cleared.contains(&key) {
+            self.cleared.push(key);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MapAction {
+    StartArea { act: u16 },
+    StartZone { zone: u8, act: u8 },
+    StartMatch,
+    BackToMap { screen: u8 },
 }
 
 pub struct FrontContext {
@@ -159,19 +184,28 @@ impl FrontContext {
             self.palette_normal[i] = *w;
         }
     }
-    pub fn render_hash(
+    pub fn render_rgba(
         &mut self,
         vdp: &mut Vdp,
         line_a: &dyn Fn(usize) -> Option<i32>,
         line_b: &dyn Fn(usize) -> Option<i32>,
-    ) -> u64 {
+    ) -> Vec<u8> {
         for i in 0..64 {
             vdp.cram[i] = self.ram.u16(vars::NORMAL_PALETTE + i as u16 * 2);
         }
         vdp.backdrop = 0x20;
         vdp.split_line = -1;
         vdp.render_screen(&self.vram, &self.ram, PLANE_A, PLANE_B, line_a, line_b);
-        let rgba = vdp.to_rgba();
+        vdp.to_rgba()
+    }
+
+    pub fn render_hash(
+        &mut self,
+        vdp: &mut Vdp,
+        line_a: &dyn Fn(usize) -> Option<i32>,
+        line_b: &dyn Fn(usize) -> Option<i32>,
+    ) -> u64 {
+        let rgba = self.render_rgba(vdp, line_a, line_b);
         let d = Sha256::digest(&rgba);
         u64::from_le_bytes(d[..8].try_into().unwrap())
     }
@@ -190,6 +224,7 @@ pub struct GameFlow {
     pub screen: ScreenState,
     pub vdp: Vdp,
 }
+#[allow(clippy::large_enum_variant)]
 pub enum ScreenState {
     Title(TitleScreen),
     Map(MapScreen),
@@ -198,35 +233,133 @@ pub enum ScreenState {
 
 impl GameFlow {
     pub fn new(assets: FrontendAssets, start: Start) -> Self {
-        let mut f = Self {
-            assets: assets.clone(),
-            progress: MapProgress::default(),
-            screen: ScreenState::Map(MapScreen::new(&assets, MapProgress::default(), false)),
-            vdp: Vdp::new(),
-        };
-        f.screen = match start {
+        Self::new_at(assets, start, 1, 0)
+    }
+
+    /// Starts a flow at a world/screen, as `--world`/`--map-screen` do.
+    pub fn new_at(assets: FrontendAssets, start: Start, world: u8, map_screen: usize) -> Self {
+        let mut progress = MapProgress::default();
+        progress.world = world.clamp(1, 8) as i32;
+        progress.map_screen = map_screen as i32;
+        if world > 1 || map_screen > 0 {
+            if let Some(w) = assets
+                .campaign
+                .as_ref()
+                .and_then(|c| c.world(progress.world as u8))
+            {
+                progress.map_screen = progress
+                    .map_screen
+                    .clamp(0, w.screen_count().saturating_sub(1) as i32);
+                progress.position = if map_screen == 0 {
+                    world_start_tile(progress.world as u8)
+                } else {
+                    w.areas
+                        .iter()
+                        .find(|a| a.screen as usize == map_screen && a.available())
+                        .map(|a| a.tile())
+                        .unwrap_or_else(|| world_start_tile(progress.world as u8))
+                };
+            }
+        }
+        let screen = match start {
             Start::Title => ScreenState::Title(TitleScreen::new(&assets)),
-            Start::Map => ScreenState::Map(MapScreen::new(&assets, MapProgress::default(), true)),
+            Start::Map => ScreenState::Map(MapScreen::with_campaign(
+                &assets,
+                progress.clone(),
+                true,
+                assets.campaign.clone(),
+            )),
             Start::Match => {
-                let mut p = MapProgress::default();
-                p.position = 4 * 16 + 8;
-                ScreenState::Match(MatchScreen::new(&assets, p))
+                progress.position = SPADE_TILE;
+                ScreenState::Match(MatchScreen::new(&assets, progress.clone()))
             }
         };
-        f
-    }
-    pub fn step(&mut self, buttons: u8) {
-        match &mut self.screen {
-            ScreenState::Title(s) => s.step(&self.assets, buttons),
-            ScreenState::Map(s) => s.step(&self.assets, buttons),
-            ScreenState::Match(s) => s.step(&self.assets, buttons),
+        Self {
+            assets,
+            progress,
+            screen,
+            vdp: Vdp::new(),
         }
     }
+
+    /// Runs the current screen. Returns a start request from the map for the host to load.
+    pub fn step(&mut self, buttons: u8) -> Option<MapAction> {
+        let mut action = None;
+        match &mut self.screen {
+            ScreenState::Title(s) => s.step(&self.assets, buttons),
+            ScreenState::Map(s) => {
+                s.step(&self.assets, buttons);
+                self.progress = s.progress.clone();
+                action = s.take_action();
+                if let Some(MapAction::BackToMap { screen }) = action {
+                    self.progress.map_screen = screen as i32;
+                    self.screen = ScreenState::Map(MapScreen::with_campaign(
+                        &self.assets,
+                        self.progress.clone(),
+                        false,
+                        self.assets.campaign.clone(),
+                    ));
+                    action = None;
+                } else if matches!(action, Some(MapAction::StartMatch)) {
+                    self.progress.position = SPADE_TILE;
+                    self.screen =
+                        ScreenState::Match(MatchScreen::new(&self.assets, self.progress.clone()));
+                    action = None;
+                }
+            }
+            ScreenState::Match(s) => s.step(&self.assets, buttons),
+        }
+        action
+    }
+
+    pub fn set_world_screen(&mut self, world: u8, map_screen: usize) {
+        self.progress.world = world.clamp(1, 8) as i32;
+        self.progress.map_screen = map_screen as i32;
+        if let Some(w) = self.assets.campaign.as_ref().and_then(|c| c.world(world)) {
+            self.progress.map_screen = self
+                .progress
+                .map_screen
+                .clamp(0, w.screen_count().saturating_sub(1) as i32);
+            self.progress.position = w
+                .areas
+                .iter()
+                .find(|a| a.screen as usize == map_screen && a.available())
+                .map(|a| a.tile())
+                .unwrap_or_else(|| world_start_tile(world));
+        }
+        self.screen = ScreenState::Map(MapScreen::with_campaign(
+            &self.assets,
+            self.progress.clone(),
+            false,
+            self.assets.campaign.clone(),
+        ));
+    }
+
+    /// Rebuilds the map screen from carried progress (level end / death return).
+    pub fn set_progress_map(&mut self, progress: MapProgress, intro: bool) {
+        self.progress = progress;
+        self.screen = ScreenState::Map(MapScreen::with_campaign(
+            &self.assets,
+            self.progress.clone(),
+            intro,
+            self.assets.campaign.clone(),
+        ));
+    }
+
     pub fn render_hash(&mut self) -> u64 {
         match &mut self.screen {
             ScreenState::Title(s) => s.render_hash(&mut self.vdp, &self.assets),
             ScreenState::Map(s) => s.render_hash(&mut self.vdp, &self.assets),
             ScreenState::Match(s) => s.render_hash(&mut self.vdp, &self.assets),
+        }
+    }
+
+    /// The current front-end framebuffer as RGBA, for non-empty-screen checks.
+    pub fn render_rgba(&mut self) -> Vec<u8> {
+        match &mut self.screen {
+            ScreenState::Map(s) => s.render_rgba(&mut self.vdp),
+            ScreenState::Title(s) => s.render_rgba(&mut self.vdp),
+            ScreenState::Match(s) => s.render_rgba(&mut self.vdp),
         }
     }
 }
@@ -250,6 +383,10 @@ impl TitleScreen {
     }
     pub fn render_hash(&mut self, v: &mut Vdp, _a: &FrontendAssets) -> u64 {
         self.ctx.render_hash(v, &|_| Some(0), &|_| Some(0))
+    }
+
+    pub fn render_rgba(&mut self, v: &mut Vdp) -> Vec<u8> {
+        self.ctx.render_rgba(v, &|_| Some(0), &|_| Some(0))
     }
 }
 pub struct MatchScreen {
@@ -479,6 +616,11 @@ impl MatchScreen {
         let line = |line: usize| Some(if line + 8 < 193 { 8 } else { 7 });
         self.ctx.render_hash(v, &line, &line)
     }
+
+    pub fn render_rgba(&mut self, v: &mut Vdp) -> Vec<u8> {
+        let line = |line: usize| Some(if line + 8 < 193 { 8 } else { 7 });
+        self.ctx.render_rgba(v, &line, &line)
+    }
 }
 pub const LEVEL11_TILE: i32 = 4;
 pub const LEVEL12_TILE: i32 = 8;
@@ -492,17 +634,47 @@ const HORZ_PATHS: [u8; 9] = [0x45, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE
 const VERT_PATHS: [u8; 7] = [0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA];
 const COMPLETABLE: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];
 
+pub const PANEL_ZONES: [(i32, u8); 3] = [
+    (LEVEL11_TILE, 0x40),
+    (LEVEL12_TILE, 0x41),
+    (LEVEL13_TILE, 0x42),
+];
+
+fn panel_zone(tile: i32) -> Option<u8> {
+    PANEL_ZONES
+        .iter()
+        .find(|(t, _)| *t == tile)
+        .map(|(_, z)| *z)
+}
+
+fn reverse(bit: i32) -> i32 {
+    match bit {
+        0x08 => 0x04,
+        0x04 => 0x08,
+        0x02 => 0x01,
+        0x01 => 0x02,
+        _ => 0,
+    }
+}
+
 pub struct MapScreen {
     pub ctx: FrontContext,
     pub progress: MapProgress,
+    pub action: Option<MapAction>,
     ppu: NesPpu,
     layout: [u8; 144],
+    campaign: Option<CampaignMap>,
+    world: Option<MapWorld>,
+    areas: std::collections::HashMap<i32, MapArea>,
     intro: bool,
     frames: i32,
     x: i32,
     y: i32,
     move_left: i32,
     move_dir: i32,
+    next_screen: Option<u8>,
+    entry_progress: i32,
+    pending_action: Option<MapAction>,
     anim_frame: usize,
     anim_ticks: i32,
     box_shown: bool,
@@ -514,20 +686,40 @@ pub struct MapScreen {
 }
 impl MapScreen {
     pub fn new(a: &FrontendAssets, progress: MapProgress, intro: bool) -> Self {
+        Self::with_campaign(a, progress, intro, a.campaign.clone())
+    }
+
+    pub fn with_campaign(
+        a: &FrontendAssets,
+        progress: MapProgress,
+        intro: bool,
+        campaign: Option<CampaignMap>,
+    ) -> Self {
+        let world = campaign
+            .as_ref()
+            .and_then(|c| c.world(progress.world.clamp(1, 8) as u8))
+            .cloned();
         let mut s = Self {
             ctx: FrontContext::new(a.clone()),
             progress: progress.clone(),
+            action: None,
             ppu: NesPpu {
                 horizontal_mirroring: false,
                 ..Default::default()
             },
             layout: [0; 144],
+            campaign,
+            world,
+            areas: std::collections::HashMap::new(),
             intro,
             frames: 0,
             x: 0,
             y: 0,
             move_left: 0,
             move_dir: 0,
+            next_screen: None,
+            entry_progress: 0,
+            pending_action: None,
             anim_frame: 0,
             anim_ticks: 18,
             box_shown: false,
@@ -560,13 +752,20 @@ impl MapScreen {
         }
         s.ctx.load_palette_03();
         let mut p = s.progress.clone();
-        if intro {
+        if intro && p.world == 1 && p.map_screen == 0 {
             p.position = 2 * 16 + 2;
+        } else if intro && p.world != 1 && p.position == 2 * 16 + 2 {
+            p.position = world_start_tile(p.world as u8);
+        }
+        if let Some(w) = &s.world {
+            let screens = w.map.len() / 144;
+            p.map_screen = p.map_screen.clamp(0, screens.saturating_sub(1) as i32);
+            if p.map_screen > 0 && p.position < 0 && !intro {
+                p.position = world_start_tile(p.world as u8);
+            }
         }
         s.progress = p;
-        for i in 0..144 {
-            s.layout[i] = s.ctx.assets.prg(12, 0xA5AA + i);
-        }
+        s.load_screen();
         s.x = (s.progress.position & 15) * 16;
         s.y = ((s.progress.position >> 4) + 2) * 16;
         s.draw_map();
@@ -580,6 +779,31 @@ impl MapScreen {
         s.fade_left = 22;
         s
     }
+
+    fn load_screen(&mut self) {
+        let screen = self.progress.map_screen.max(0) as usize;
+        self.areas.clear();
+        if let Some(w) = &self.world {
+            if let Some(cells) = w.screen(screen) {
+                self.layout.copy_from_slice(cells);
+                for area in &w.areas {
+                    if area.screen as usize == screen && area.available() {
+                        self.areas.insert(area.tile(), area.clone());
+                    }
+                }
+            }
+        } else {
+            for i in 0..144 {
+                self.layout[i] = self.ctx.assets.prg(12, 0xA5AA + i);
+            }
+        }
+        for (tile, cell) in self.layout.iter_mut().enumerate() {
+            if self.progress.is_cleared(tile as i32) {
+                *cell &= 0xC0;
+            }
+        }
+    }
+
     fn layout_at(&self, x: i32, y: i32) -> u8 {
         let c = x >> 4;
         let r = (y >> 4) - 2;
@@ -671,6 +895,27 @@ impl MapScreen {
         // banks and nametable rows
         let frame = self.anim_frame;
         let banks = [0x14, 0x70, 0x72, 0x74];
+        let card_pieces: Vec<(i32, i32, u8, u16)> = self
+            .progress
+            .cards
+            .iter()
+            .take(3)
+            .enumerate()
+            .filter_map(|(i, card)| {
+                let frame = match card {
+                    Card::Ring => 5,
+                    Card::Shield => 7,
+                    Card::Invincibility => 8,
+                };
+                let piece = self.ctx.assets.monitor.frames.get(frame)?.first()?;
+                Some((
+                    32 + (22 + i as i32 * 3) * 8,
+                    25 * 8 - 8,
+                    piece.size,
+                    ((piece.pattern as usize + 0x580) as u16) | 0x8000,
+                ))
+            })
+            .collect();
         let p = &mut self.ctx;
         let mut nes = NesPresenter::new(&mut p.vram, &mut p.ram, &p.assets);
         nes.overrides = self.overrides.clone();
@@ -715,6 +960,9 @@ impl MapScreen {
             5,
             (0x8000 | (0x5C0 + fr * 4)) as u16,
         );
+        for (x, y, size, pattern) in card_pieces {
+            sk.piece(x, y, size, pattern);
+        }
         sk.end();
     }
     pub fn step(&mut self, _a: &FrontendAssets, buttons: u8) {
@@ -729,6 +977,14 @@ impl MapScreen {
             return;
         }
         self.frames += 1;
+        if self.entry_progress > 0 {
+            self.entry_progress += 1;
+            if self.entry_progress >= 32 {
+                self.action = self.pending_action.take();
+            }
+            self.present();
+            return;
+        }
         if self.box_shown {
             if self.frames < 120 && buttons & 0xF0 == 0 {
                 self.present();
@@ -737,21 +993,52 @@ impl MapScreen {
             self.box_shown = false;
             self.draw_map();
         }
-        self.step_move(buttons);
+        if self.move_left > 0 {
+            self.step_move(0);
+        } else if buttons & 0xF0 != 0 {
+            let tile = self.current_tile();
+            let legacy_stage = self.progress.world == 1
+                && self.progress.map_screen == 0
+                && panel_zone(tile).is_some();
+            let minigame = self.progress.world == 1
+                && self.progress.map_screen == 0
+                && tile == SPADE_TILE
+                && !self.progress.is_cleared(SPADE_TILE);
+            let campaign_area = self.areas.get(&tile).filter(|a| a.available()).cloned();
+            if legacy_stage || minigame || campaign_area.is_some() {
+                self.pending_action = Some(if legacy_stage {
+                    let zone = panel_zone(tile).unwrap();
+                    MapAction::StartZone { zone, act: 1 }
+                } else if minigame {
+                    MapAction::StartMatch
+                } else {
+                    MapAction::StartArea {
+                        act: campaign_area.unwrap().act,
+                    }
+                });
+                self.entry_progress = 1;
+            } else {
+                self.step_move(buttons);
+            }
+        } else {
+            self.step_move(buttons);
+        }
         self.present();
     }
-    fn step_move(&mut self, _buttons: u8) {
+
+    /// `Map_CheckDoMove`: a direction is accepted only when the adjacent tile is a path for it.
+    fn step_move(&mut self, buttons: u8) {
         if self.move_left > 0 {
-            let dx = if self.move_dir == 8 {
+            let dx = if self.move_dir == 0x08 {
                 2
-            } else if self.move_dir == 4 {
+            } else if self.move_dir == 0x04 {
                 -2
             } else {
                 0
             };
-            let dy = if self.move_dir == 2 {
+            let dy = if self.move_dir == 0x02 {
                 2
-            } else if self.move_dir == 1 {
+            } else if self.move_dir == 0x01 {
                 -2
             } else {
                 0
@@ -761,12 +1048,76 @@ impl MapScreen {
             self.move_left -= 2;
             if self.move_left == 0 {
                 self.progress.position = self.current_tile();
+                if let Some(screen) = self.next_screen.take() {
+                    self.progress.map_screen = screen as i32;
+                    self.x = (self.x + 256) % 256;
+                    self.progress.position = self.current_tile();
+                    self.action = Some(MapAction::BackToMap { screen });
+                }
+            }
+            return;
+        }
+        let (bit, dx, dy, paths): (i32, i32, i32, &[u8]) = match buttons & 0x0F {
+            0x08 => (0x08, 1, 0, &HORZ_PATHS),
+            0x04 => (0x04, -1, 0, &HORZ_PATHS),
+            0x02 => (0x02, 0, 1, &VERT_PATHS),
+            0x01 => (0x01, 0, -1, &VERT_PATHS),
+            _ => return,
+        };
+        // A level panel that has not been cleared only allows the way back (SMB3 stops Mario on it).
+        let here = self.layout_at(self.x, self.y);
+        if self.is_level(here) && !self.progress.is_cleared(self.current_tile()) {
+            if bit != reverse(self.progress.last_move) {
+                return;
             }
         }
+        let mut next = self.layout_at(self.x + dx * 16, self.y + dy * 16);
+        let destination_x = self.x + dx * 32;
+        self.next_screen = None;
+        if let Some(world) = &self.world {
+            if dy == 0 && !(0..256).contains(&destination_x) {
+                let screen = self.progress.map_screen + dx;
+                if screen < 0 || screen >= world.screen_count() as i32 {
+                    return;
+                }
+                let column = ((self.x + dx * 16) / 16 + 16) % 16;
+                let row = self.current_tile() >> 4;
+                if let Some(cells) = world.screen(screen as usize) {
+                    next = cells[(row * 16 + column) as usize];
+                    self.next_screen = Some(screen as u8);
+                }
+            }
+        }
+        if !paths.contains(&next) {
+            self.next_screen = None;
+            return;
+        }
+        self.move_dir = bit;
+        self.move_left = 32;
+        self.progress.last_move = bit;
+    }
+
+    fn is_level(&self, tile: u8) -> bool {
+        tile != TILE_START
+            && (tile >= self.ctx.assets.prg(12, 0xA400 + (tile >> 6) as usize)
+                || COMPLETABLE.contains(&tile))
+    }
+
+    pub fn take_action(&mut self) -> Option<MapAction> {
+        self.action.take()
+    }
+
+    pub fn entry_progress(&self) -> i32 {
+        self.entry_progress
     }
     pub fn render_hash(&mut self, v: &mut Vdp, _a: &FrontendAssets) -> u64 {
         let line = |line: usize| Some(if line + 8 < 193 { 8 } else { 7 });
         self.ctx.render_hash(v, &line, &line)
+    }
+
+    pub fn render_rgba(&mut self, v: &mut Vdp) -> Vec<u8> {
+        let line = |line: usize| Some(if line + 8 < 193 { 8 } else { 7 });
+        self.ctx.render_rgba(v, &line, &line)
     }
 }
 

@@ -77,16 +77,32 @@ pub fn load_audio_assets_for_zone(
     zone: u8,
     music_file: Option<&str>,
 ) -> Result<AudioAssets, String> {
-    let mut a = load_audio_assets(archive)?;
     let fallback = format!("zones/zone_{zone:02X}/music.json");
     let path = match music_file {
         Some(p) => Some(p.to_string()),
         None if archive.exists(&fallback) => Some(fallback),
         None => None,
     };
+    load_audio_assets_with_song(archive, path.as_deref())
+}
+
+/// Loads a campaign area's `music.json` beside `zones/<area.directory>`.
+pub fn load_audio_assets_for_area(
+    archive: &Archive,
+    directory: &str,
+) -> Result<AudioAssets, String> {
+    load_audio_assets_with_song(archive, Some(&format!("zones/{directory}/music.json")))
+}
+
+/// Loads the base driver data plus one converted SMB3 song manifest, if present.
+pub fn load_audio_assets_with_song(
+    archive: &Archive,
+    path: Option<&str>,
+) -> Result<AudioAssets, String> {
+    let mut a = load_audio_assets(archive)?;
     if let Some(path) = path {
-        if archive.exists(&path) {
-            let manifest = archive.read_json(&path)?;
+        if archive.exists(path) {
+            let manifest = archive.read_json(path)?;
             if let Some(song) = manifest["songs"].as_array().and_then(|s| s.first()) {
                 let id = song["id"].as_u64().unwrap_or(0) as u8;
                 let address = song["address"].as_u64().unwrap_or(0) as u32;

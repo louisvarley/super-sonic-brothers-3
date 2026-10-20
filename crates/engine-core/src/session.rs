@@ -48,6 +48,10 @@ pub struct Session {
     pub ticks: u32,
     /// The legacy `LevelSession.Stopped`: an unported path aborted the frame; later frames do nothing.
     pub stopped: Option<Unported>,
+    /// Campaign mode: a death or the SMB3 goal ends the session instead of restarting the act.
+    pub exit_on_restart: bool,
+    pub exited: bool,
+    pub goal_card: Option<i32>,
 }
 
 impl Session {
@@ -146,7 +150,24 @@ impl Session {
             audio: None,
             ticks: 0,
             stopped: None,
+            exit_on_restart: false,
+            exited: false,
+            goal_card: None,
         })
+    }
+
+    /// Campaign mode: a death/goal ends the session with `exited`, for map return.
+    pub fn set_exit_on_restart(&mut self, exit: bool) {
+        self.exit_on_restart = exit;
+    }
+
+    pub fn exited(&self) -> bool {
+        self.exited
+    }
+
+    /// The SMB3 goal card (0 ring, 1 shield, 2 invincibility) when the goal ended the session.
+    pub fn goal_card(&self) -> Option<i32> {
+        self.goal_card
     }
 
     /// The act the session is playing (`act` is 1-based, as `LevelSession.CurrentAct`).
@@ -158,7 +179,7 @@ impl Session {
     pub fn step(&mut self, buttons: u8) -> Result<(), Unported> {
         // LevelSession.StepPlaying: once an unported exception has stopped the session, every later frame is a
         // no-op and the trace keeps recording the frozen state.
-        if self.stopped.is_some() {
+        if self.stopped.is_some() || self.exited {
             self.ticks += 1;
             return Ok(());
         }
@@ -215,10 +236,21 @@ impl Session {
         self.world
             .objects
             .run_after_players(&mut self.world.ram, &self.sets, dying)?;
+        if self.exit_on_restart {
+            if let Some(card) = self.world.objects.goal_card {
+                self.goal_card = Some(card);
+                self.exited = true;
+                return Ok(());
+            }
+        }
         self.update_tails_tails_vram();
         self.update_dust_vram();
 
         if self.world.ram.u16(vars::LEVEL_INACTIVE_FLAG) != 0 {
+            if self.exit_on_restart {
+                self.exited = true;
+                return Ok(());
+            }
             // 0x51C4: the Act is rebuilt straight away when title cards are off.
             self.restart()?;
             return Ok(());

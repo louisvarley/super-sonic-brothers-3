@@ -16,4 +16,5 @@ cpal = "0.18.2"
 engine-core = { path = "../engine-core" }
 minifb = "0.29.0"
 png = "0.18.1"
+sha2 = "0.10"
 rom-assets = { path = "../rom-assets" }

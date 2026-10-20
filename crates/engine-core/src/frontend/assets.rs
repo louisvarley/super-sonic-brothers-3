@@ -1,4 +1,5 @@
 //! SMB3 front-end data and screens.
+use super::map_data::CampaignMap;
 use crate::graphics::SpriteData;
 use std::collections::HashMap;
 
@@ -24,6 +25,8 @@ pub struct FrontendAssets {
     pub monitor_icon_art: Vec<u8>,
     pub life_icon_art: Vec<u8>,
     pub palette_03: Vec<u16>,
+    /// All-world map data when the archive has `campaign/campaign.json`.
+    pub campaign: Option<CampaignMap>,
 }
 
 impl FrontendAssets {

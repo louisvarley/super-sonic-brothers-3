@@ -1,6 +1,7 @@
 use crate::archive::{resolve, Archive};
 use crate::level::{load_sprite_file, load_tile_art};
 use engine_core::frontend::assets::{FrontendArt, FrontendAssets};
+use engine_core::frontend::map_data::{CampaignMap, MapArea, MapWorld};
 
 const PRG: [u8; 7] = [10, 12, 22, 24, 25, 27, 30];
 const CHR: [u8; 31] = [
@@ -62,5 +63,33 @@ pub fn load_frontend_assets(archive: &Archive) -> Result<FrontendAssets, String>
             .unwrap_or(0)
         })
         .collect();
+    if archive.exists("campaign/campaign.json") {
+        let c = crate::campaign::CampaignData::load(archive)?;
+        let worlds = c
+            .worlds
+            .iter()
+            .map(|w| MapWorld {
+                number: w.number,
+                map: w.map.clone(),
+                areas: w
+                    .entries
+                    .iter()
+                    .filter_map(|e| {
+                        let id = e.area_id.as_deref()?;
+                        let a = c.area_for_id(id)?;
+                        Some(MapArea {
+                            act: a.act,
+                            world: w.number,
+                            screen: e.screen as u8,
+                            row: e.row,
+                            column: e.column,
+                            status: a.status.clone(),
+                        })
+                    })
+                    .collect(),
+            })
+            .collect();
+        a.campaign = Some(CampaignMap { worlds });
+    }
     Ok(a)
 }

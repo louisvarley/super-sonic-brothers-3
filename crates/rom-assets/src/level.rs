@@ -82,11 +82,17 @@ impl LevelData {
 
     pub fn load(archive: &Archive, zone: u16, act: u16) -> Result<Self, String> {
         let dir = format!("zones/zone_{zone:02X}/act_{act}");
+        Self::load_dir(archive, &dir)
+    }
+
+    /// Loads one act from an explicit archive directory (campaign areas use `zones/area_*/act_1`).
+    pub fn load_dir(archive: &Archive, dir: &str) -> Result<Self, String> {
         let level = archive.read_json(&format!("{dir}/level.json"))?;
+        let zone = level["zone"].as_u64().unwrap_or(0) as u16;
 
         // ---- tiles ----
         let tiles_rel = text(&level, "tiles")?;
-        let tiles_png = resolve(&dir, tiles_rel);
+        let tiles_png = resolve(dir, tiles_rel);
         let tiles_meta = archive.read_json(&change_extension(&tiles_png, "json"))?;
         let tile_count = tiles_meta["tileCount"]
             .as_u64()
@@ -96,7 +102,7 @@ impl LevelData {
         let art = tiles::from_sheet(&pixels, width as usize, tile_count);
 
         // ---- blocks ----
-        let blocks = archive.read_json(&resolve(&dir, text(&level, "blocks")?))?;
+        let blocks = archive.read_json(&resolve(dir, text(&level, "blocks")?))?;
         let mut block_words = Vec::new();
         for block in array(&blocks, "blocks")? {
             for pattern in block.as_array().ok_or("blocks: pattern is not an array")? {
@@ -110,7 +116,7 @@ impl LevelData {
         }
 
         // ---- chunks ----
-        let chunks = archive.read_json(&resolve(&dir, text(&level, "chunks")?))?;
+        let chunks = archive.read_json(&resolve(dir, text(&level, "chunks")?))?;
         let mut chunk_words = Vec::new();
         for chunk in array(&chunks, "chunks")? {
             for row in chunk.as_array().ok_or("chunks: row is not an array")? {
@@ -124,7 +130,7 @@ impl LevelData {
         }
 
         // ---- layout ----
-        let layout = archive.read_json(&resolve(&dir, text(&level, "layout")?))?;
+        let layout = archive.read_json(&resolve(dir, text(&level, "layout")?))?;
         let foreground = flatten_plane(&layout["foreground"])?;
         let background = flatten_plane(&layout["background"])?;
 
@@ -132,7 +138,7 @@ impl LevelData {
         let mut cram = [0u16; 64];
         if let Some(palettes) = level["palettes"].as_array() {
             for p in palettes {
-                let path = resolve(&dir, p.as_str().ok_or("palettes: entry is not a string")?);
+                let path = resolve(dir, p.as_str().ok_or("palettes: entry is not a string")?);
                 let pal = archive.read_json(&path)?;
                 let start = pal["startColour"].as_u64().unwrap_or(0) as usize;
                 if let Some(colours) = pal["colours"].as_array() {
@@ -151,7 +157,7 @@ impl LevelData {
         // ---- collision indexes ----
         let (mut collision_primary, mut collision_secondary) = (None, None);
         if let Some(col_ref) = level["collision"].as_str() {
-            let col = archive.read_json(&resolve(&dir, col_ref))?;
+            let col = archive.read_json(&resolve(dir, col_ref))?;
             collision_primary = Some(u8_array(&col["primary"])?);
             collision_secondary = Some(u8_array(&col["secondary"])?);
         }
@@ -174,7 +180,7 @@ impl LevelData {
         let mut objects = Vec::new();
         let (mut object_list_address, mut object_boundary_x) = (0, 0);
         if let Some(obj_ref) = level["objects"].as_str() {
-            let obj = archive.read_json(&resolve(&dir, obj_ref))?;
+            let obj = archive.read_json(&resolve(dir, obj_ref))?;
             object_list_address = obj["listAddress"].as_u64().unwrap_or(0) as u32;
             object_boundary_x = obj["boundaryX"].as_i64().unwrap_or(0) as i32;
             for o in array(&obj, "objects")? {
@@ -193,7 +199,7 @@ impl LevelData {
 
         let mut ring_groups = Vec::new();
         if let Some(ring_ref) = level["rings"].as_str() {
-            let rings = archive.read_json(&resolve(&dir, ring_ref))?;
+            let rings = archive.read_json(&resolve(dir, ring_ref))?;
             for g in array(&rings, "groups")? {
                 let a = g.as_array().ok_or("rings: group is not an array")?;
                 ring_groups.push(RingGroup {
@@ -207,9 +213,9 @@ impl LevelData {
 
         let gameplay = level["gameplay"]
             .as_str()
-            .map(|p| archive.read_json(&resolve(&dir, p)))
+            .map(|p| archive.read_json(&resolve(dir, p)))
             .transpose()?;
-        let music_file = level["musicFile"].as_str().map(|p| resolve(&dir, p));
+        let music_file = level["musicFile"].as_str().map(|p| resolve(dir, p));
 
         // ---- data shared by every act ----
         let mut globals = GlobalAssets::default();
@@ -279,7 +285,7 @@ impl LevelData {
             });
         }
         if let Some(cycle_ref) = level["paletteCycle"].as_str() {
-            let cycle = archive.read_json(&resolve(&dir, cycle_ref))?;
+            let cycle = archive.read_json(&resolve(dir, cycle_ref))?;
             globals.palette_cycle = Some(PaletteCycle {
                 colours: cycle["colours"]
                     .as_array()
@@ -297,7 +303,7 @@ impl LevelData {
             });
         }
 
-        let mut graphics = load_graphics(archive, &dir, &level, &art)?;
+        let mut graphics = load_graphics(archive, dir, &level, &art)?;
         graphics.geometry = RenderGeometry {
             foreground: foreground.clone(),
             background: background.clone(),
