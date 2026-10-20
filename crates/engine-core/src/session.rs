@@ -122,9 +122,16 @@ impl Session {
             return Ok(());
         }
 
-        self.camera.deform_bg_layer(&mut self.world.ram)?;
-        // StreamGiantRingArt, Plc.Run, Oscillation.Step, PaletteCycle and SignpostArtLoad are later milestones.
+        self.camera
+            .deform_bg_layer(&mut self.world.ram, &self.world.globals.wave_table)?;
+        // StreamGiantRingArt, Plc.Run and SignpostArtLoad are later milestones; oscillation and the palette
+        // cycle keep their original place in the frame.
         self.world.rings.run(&mut self.world.ram);
+        self.world.oscillation.step(&mut self.world.ram);
+        palette_cycle(
+            &mut self.world.ram,
+            self.world.globals.palette_cycle.as_ref(),
+        );
         sync_animations(&mut self.world.ram);
         sprites::build_sprites(&mut self.world.ram);
         self.world.object_manager.run(&mut self.world.ram);
@@ -179,6 +186,30 @@ impl Session {
             ram.w8(vars::UPDATE_HUD_LIVES, 0);
         }
         Ok(())
+    }
+}
+
+/// `PaletteCycle` (0x1C04 etc.): every `TimerReload+1` frames, copy the next frame's colours.
+fn palette_cycle(ram: &mut Ram, cycle: Option<&crate::assets::PaletteCycle>) {
+    let Some(cycle) = cycle else {
+        return;
+    };
+    let timer = (ram.u16(vars::PAL_CYCLE_TIMER) as i16).wrapping_sub(1);
+    ram.w16(vars::PAL_CYCLE_TIMER, timer as u16);
+    if timer >= 0 {
+        return;
+    }
+    ram.w16(vars::PAL_CYCLE_TIMER, cycle.timer_reload as u16);
+    let frame = ram.u16(vars::PAL_CYCLE_FRAME);
+    ram.w16(vars::PAL_CYCLE_FRAME, frame.wrapping_add(1));
+    let Some(colours) = cycle.frames.get((frame & 3) as usize) else {
+        return;
+    };
+    for (colour, value) in cycle.colours.iter().zip(colours) {
+        ram.w16(
+            vars::NORMAL_PALETTE.wrapping_add((*colour as u16) * 2),
+            *value,
+        );
     }
 }
 

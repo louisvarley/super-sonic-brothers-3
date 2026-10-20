@@ -8,12 +8,14 @@
 //! Port order: primitives (this milestone), then level loading, player/camera, objects, frontend, audio.
 
 pub mod animation;
+pub mod assets;
 pub mod camera;
 pub mod collision;
 pub mod math;
 pub mod math_tables;
 pub mod object;
 pub mod objects;
+pub mod oscillation;
 pub mod player;
 pub mod ram;
 pub mod rings;

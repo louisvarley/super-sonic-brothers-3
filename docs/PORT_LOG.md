@@ -345,6 +345,54 @@ even though the stock build does not ship Green Hill/Marble. The golden traces f
 equivalence gate, not just a reference. The stock importer remains workstream 2 and may simply not generate those
 levels.
 
+## 2026-10-20 — Phase 2 M4c-1: Emerald Hill (Sonic 2 zone $00) clear for 600 ticks
+
+### New traces (generator, committed)
+`tools/golden/generate.mjs` now records `sonic-ehz-1-playing-{idle,right,jump,spindash}` and the same four for
+`sonic-ehz-2` (zone `$00`, acts 1/2): 600 ticks, `noTitleCard: true`, the existing input scripts. Generated with
+`node tools/golden/generate.mjs --only sonic-ehz-1-playing` / `--only sonic-ehz-2-playing`; only the eight new entries
+and `legacyCommit` changed in the manifest, no existing trace bytes.
+
+### Engine generality
+* `World` now reads `GlobalAssets` from the level source: the normal/hack oscillator start values
+  (`objects/oscillation.json`), bridge sag/bend tables, spring slope tables, the spiral height/flip tables and the
+  title-screen ripple table used by `SwScrlEhz`.
+* `Oscillation` (`0x5D26`/`0x5DCC`) is initialised with the world and stepped in `World.Step` order after the rings
+  manager, before `PaletteCycle`; platform angles read `Oscillation.Value(6)`.
+* `Camera` gained `SwScrlEhz` (`0xDE9C`), `EhzEvents` (`0x108A4`, act 2 boss script) and the zone-$00 branch of
+  `InitCameraValues` (`0xDB64`). The SMB3 Easter-egg background is unchanged.
+* `PaletteCycle` now runs from the act's `palette_cycle.json` (Emerald Hill's water cycle), in the original frame
+  position before `SyncAnimations`.
+* The object registry now has two columns: `HackZoneFlag != 0` keeps the SMB3/hack ids exactly as before;
+  `HackZoneFlag == 0` dispatches the Sonic 2 column used by Emerald Hill (the `RegisterS2` ids and the shared
+  bridge/platform/monitor/spring/plane-switcher handlers). Unported ids in that column still despawn like the original.
+
+### Ported (Emerald Hill and shared Sonic 2 objects)
+`Spiral` (horizontal corkscrew ride, data tables loaded), `Waterfall`, `SceneryS2`, `SpikesS2` (upright/sideways/
+upside-down, solid + direct hurt), `Buzzer` with its flame and projectile, `Masher`, `Coconuts`/coconut
+(`LoadSubObject`, climb/throw/fall), `Bridge` (multi-sprite logs, sag/bend, standing logs), `Platform` (swing/bob,
+top-solid, falling/rising variants), `Spring` (up/sideways/down/diagonal, twirl and layer switch), `Monitor` and its
+contents ($2E), and `PlaneSwitcher`. `Solid` gained `SolidAlwaysOne`, `PlatformObject`/`ChkYRange` and
+`SlopedSolidOne` for these handlers.
+
+### Findings
+1. **Sonic's invulnerability gates item pickups for Tails too.** `Touch_ChkValue` reads `ram.Sonic.InvulnerableTime`
+   even when Tails touched the item. Using the touching player's timer let Tails collect Sonic's spilled rings during
+   Sonic's hurt animation (ticks 329/294 in EHZ 1 jump/spindash); the gate now reads Sonic's timer.
+2. **Act 2's boss trigger is at camera x `$2780`**, but the 600-tick traces only reach camera x 965; the boss spawn
+   (`$29D0,$426`, 90 frames after the arena locks) and `EggPrison` are therefore not exercised and remain for the
+   goal/boss trace milestone. The level-event script itself is ported.
+
+### Verification
+* `cargo test -p engine-core --test ehz_motion -- --nocapture`: 8/8 traces match `CompareMask::MOTION` for all 600
+  ticks.
+* `cargo test --workspace`: 68 engine-core unit tests, 1 EHZ motion, 1 (1-1 motion), 1 (SMB3 1-2/1-3 motion),
+  2 golden-trace, 5 rom-assets — all pass.
+* `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+Next (M4c-2): goal/signpost/starpost/giant-ring flow and the act-2 boss + EggPrison traces, then the Green Hill/Marble
+object sets.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

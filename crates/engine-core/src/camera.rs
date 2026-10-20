@@ -35,7 +35,7 @@ pub struct Camera;
 
 impl Camera {
     /// `DeformBgLayer` (0xDCD6) for one frame.
-    pub fn deform_bg_layer(&mut self, ram: &mut Ram) -> Result<(), Unported> {
+    pub fn deform_bg_layer(&mut self, ram: &mut Ram, wave_table: &[u8]) -> Result<(), Unported> {
         if ram.u8(vars::DEFORM_LOCK) != 0 {
             return Ok(()); // camera frozen
         }
@@ -75,6 +75,8 @@ impl Camera {
         let zone = ram.u8(vars::CURRENT_ZONE_AND_ACT);
         if is_easter_egg(zone) {
             self.sw_scrl_easter_egg(ram);
+        } else if zone == 0x00 {
+            self.sw_scrl_ehz(ram, wave_table);
         } else {
             return Err(Unported::new(
                 0xDDF2,
@@ -315,14 +317,16 @@ impl Camera {
     /// `DynamicLevelEvents` (0x10804): per-zone events, then ease `Camera_Max_Y` toward its target.
     fn dynamic_level_events(&mut self, ram: &mut Ram) -> Result<(), Unported> {
         let zone = ram.u8(vars::CURRENT_ZONE_AND_ACT);
+        let act = ram.u8(vars::CURRENT_ZONE_AND_ACT.wrapping_add(1));
         if !is_zone_ported(zone) {
             return Err(Unported::new(
                 0x10804,
                 format!("level events for zone {zone:02X}"),
             ));
         }
-        // The SMB3 zones have no event script; the Sonic zones' scripts are a later milestone.
-        if !is_easter_egg(zone) {
+        if zone == 0x00 {
+            self.ehz_events(ram, act);
+        } else if !is_easter_egg(zone) {
             return Err(Unported::new(
                 0x10804,
                 format!("level events for zone {zone:02X}"),
@@ -359,6 +363,128 @@ impl Camera {
         Ok(())
     }
 
+    /// Emerald Hill (zone $00, Sonic 2's events, 0x108A4). Act 1 has none. Act 2: past x $2780 the left limit
+    /// follows the camera and the bottom limit becomes $390; at $28F0 the arena locks ($28F0-$2940), the music
+    /// fades, the boss flag becomes 2 and the boss art loads (PLC $29); once the camera is down at $388, 90
+    /// frames later the boss (object $56, subtype $81) appears at $29D0,$426 with the boss music; once it is
+    /// beaten the left limit follows.
+    fn ehz_events(&mut self, ram: &mut Ram, act: u8) {
+        if act == 0 {
+            return;
+        }
+        let cam_x = ram.u16(vars::CAMERA_X_POS);
+        match ram.u8(vars::DYNAMIC_RESIZE_ROUTINE) {
+            0 => {
+                if ram.u16(vars::TWO_PLAYER_MODE) != 0 {
+                    set_right(ram, 0x2920);
+                    return;
+                }
+                if cam_x < 0x2780 {
+                    return;
+                }
+                set_left(ram, cam_x);
+                ram.w16(vars::CAMERA_MAX_Y_POS_TARGET, 0x390);
+                ram.w16(vars::TAILS_MAX_Y_POS, 0x390);
+                next_event(ram);
+            }
+            2 => {
+                if cam_x < 0x28F0 {
+                    return;
+                }
+                set_left(ram, 0x28F0);
+                set_right(ram, 0x2940);
+                next_event(ram);
+                ram.w8(vars::BOSS_SPAWN_DELAY, 0);
+                ram.w8(vars::CURRENT_BOSS_ID, 2);
+            }
+            4 => {
+                if ram.u16(vars::CAMERA_Y_POS) >= 0x388 {
+                    ram.w16(vars::CAMERA_MIN_Y_POS, 0x388);
+                    ram.w16(vars::TAILS_MIN_Y_POS, 0x388);
+                }
+                let delay = ram.u8(vars::BOSS_SPAWN_DELAY).wrapping_add(1);
+                ram.w8(vars::BOSS_SPAWN_DELAY, delay);
+                if delay < 0x5A {
+                    return;
+                }
+                if let Some(boss) = crate::objects::find_free_slot(ram) {
+                    boss.set_id(ram, 0x56);
+                    boss.set_subtype(ram, 0x81);
+                    boss.set_x(ram, 0x29D0);
+                    boss.set_y(ram, 0x426);
+                }
+                next_event(ram);
+            }
+            6 => {
+                if ram.u8(vars::BOSS_DEFEATED_FLAG) == 0 {
+                    return;
+                }
+                ram.w16(vars::CAMERA_MIN_X_POS, cam_x);
+                ram.w16(vars::TAILS_MAX_X_POS, ram.u16(vars::CAMERA_MAX_X_POS));
+                ram.w16(vars::TAILS_MIN_X_POS, cam_x);
+            }
+            _ => {}
+        }
+    }
+
+    /// `SwScrlEhz` (0xDE9C): Emerald Hill's six bands of parallax plus the near-hills interpolation.
+    fn sw_scrl_ehz(&mut self, ram: &mut Ram, wave_table: &[u8]) {
+        ram.w16(vars::VSCROLL_FACTOR_BG, ram.u16(vars::CAMERA_BG_Y_POS));
+        let mut a1 = vars::HORIZ_SCROLL_BUF;
+        let d2 = (-(ram.u16(vars::CAMERA_X_POS) as i16)) as i32;
+        let fg = d2 as u16;
+        for _ in 0..=0x15 {
+            line(ram, &mut a1, fg, 0);
+        }
+        let d0 = d2 >> 6;
+        for _ in 0..=0x39 {
+            line(ram, &mut a1, fg, d0 as u16);
+        }
+        let d3 = d0;
+        if ram.u8(vars::VINT_RUNCOUNT_LOW) & 7 == 0 {
+            ram.w16(
+                vars::TEMP_ARRAY_LAYER_DEF,
+                ram.u16(vars::TEMP_ARRAY_LAYER_DEF).wrapping_sub(1),
+            );
+        }
+        let wave = (ram.u16(vars::TEMP_ARRAY_LAYER_DEF) & 0x1F) as usize;
+        let wave_byte =
+            |i: usize| -> i32 { wave_table.get(wave + i).copied().unwrap_or(0) as i8 as i32 };
+        for i in 0..=0x14 {
+            line(ram, &mut a1, fg, (wave_byte(i) + d3) as u16);
+        }
+        for _ in 0..=0x0A {
+            line(ram, &mut a1, fg, 0);
+        }
+        let d0 = d2 >> 4;
+        for _ in 0..=0x0F {
+            line(ram, &mut a1, fg, d0 as u16);
+        }
+        let d0 = (d2 >> 4) + ((d2 >> 4) >> 1);
+        for _ in 0..=0x0F {
+            line(ram, &mut a1, fg, d0 as u16);
+        }
+        // The near hills: d3 is 16.16 fixed point kept swapped.
+        let mut step = ((d2 >> 1) - (d2 >> 3)) << 8;
+        step = ((step / 0x30) as i16 as i32) << 8;
+        let mut acc = ((d2 >> 3) as u32 & 0xFFFF) << 16;
+        for _ in 0..=0x0E {
+            line(ram, &mut a1, fg, (acc >> 16) as u16);
+            acc = acc.wrapping_add(step as u32);
+        }
+        for _ in 0..=0x08 {
+            line(ram, &mut a1, fg, (acc >> 16) as u16);
+            line(ram, &mut a1, fg, (acc >> 16) as u16);
+            acc = acc.wrapping_add((step as u32).wrapping_mul(2));
+        }
+        for _ in 0..=0x0E {
+            for _ in 0..5 {
+                line(ram, &mut a1, fg, (acc >> 16) as u16);
+                acc = acc.wrapping_add((step as u32).wrapping_mul(3));
+            }
+        }
+    }
+
     /// The SMB3 Easter egg: SMB3's sky is the backdrop colour, so plane B stays still and empty.
     fn sw_scrl_easter_egg(&mut self, ram: &mut Ram) {
         ram.w16(vars::VSCROLL_FACTOR_BG, 0);
@@ -376,6 +502,27 @@ impl Camera {
             );
         }
     }
+}
+
+fn line(ram: &mut Ram, a1: &mut u16, fg: u16, bg: u16) {
+    ram.w16(*a1, fg);
+    ram.w16(a1.wrapping_add(2), bg);
+    *a1 = a1.wrapping_add(4);
+}
+
+fn next_event(ram: &mut Ram) {
+    let r = ram.u8(vars::DYNAMIC_RESIZE_ROUTINE).wrapping_add(2);
+    ram.w8(vars::DYNAMIC_RESIZE_ROUTINE, r);
+}
+
+fn set_left(ram: &mut Ram, x: u16) {
+    ram.w16(vars::CAMERA_MIN_X_POS, x);
+    ram.w16(vars::TAILS_MIN_X_POS, x);
+}
+
+fn set_right(ram: &mut Ram, x: u16) {
+    ram.w16(vars::CAMERA_MAX_X_POS, x);
+    ram.w16(vars::TAILS_MAX_X_POS, x);
 }
 
 #[cfg(test)]

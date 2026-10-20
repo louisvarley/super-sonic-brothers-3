@@ -6,7 +6,9 @@
 //!
 //! Still left to later milestones: the PLC queue, the HUD, sprite art/VRAM, the SMPS driver and the title card.
 
+use crate::assets::GlobalAssets;
 use crate::camera::is_easter_egg;
+use crate::oscillation::Oscillation;
 use crate::player::{Player, Unported, WaterMap};
 use crate::{vars, Obj, Ram};
 
@@ -71,6 +73,10 @@ pub trait LevelSource {
     fn rings(&self) -> Vec<RingSpawn> {
         Vec::new()
     }
+    /// Data shared by the whole game (oscillation, bridge sag, ripple table, palette cycle).
+    fn globals(&self) -> GlobalAssets {
+        GlobalAssets::default()
+    }
 }
 
 pub struct World {
@@ -82,6 +88,8 @@ pub struct World {
     pub object_manager: crate::objects::ObjectManager,
     pub objects: crate::objects::Objects,
     pub rings: crate::rings::RingsManager,
+    pub globals: GlobalAssets,
+    pub oscillation: Oscillation,
 }
 
 impl World {
@@ -135,6 +143,9 @@ impl World {
         }
 
         level.fill_level_ram(&mut ram, zone, act);
+        let globals = level.globals();
+        let no_oscillation = crate::oscillation::OscillationData::default();
+        let oscillation = Oscillation::new(globals.oscillation.as_ref().unwrap_or(&no_oscillation));
 
         // LevelSizeLoad (0xD784): bounds, default camera bias, start position and initial camera.
         let bounds = level.bounds();
@@ -203,8 +214,9 @@ impl World {
         ram.w16(vars::CAMERA_MAX_Y_POS_TARGET, max_y as u16);
         init_camera_values(&mut ram, cam_x, cam_y, zone)?;
 
-        // 0x5F1E: the SMB3 acts have no signpost.
-        ram.w16(vars::LEVEL_HAS_SIGNPOST, 0);
+        // 0x5F1E: the SMB3 acts have no signpost; Emerald Hill act 1 ends with one.
+        let signpost = !is_easter_egg(zone) && !no_signpost(zone, act);
+        ram.w16(vars::LEVEL_HAS_SIGNPOST, signpost as u16);
         // Level init (0x505A): the HUD redraws score, rings and time on the first VBlank.
         ram.w8(vars::UPDATE_HUD_SCORE, 1);
         ram.w8(vars::UPDATE_HUD_RINGS, 1);
@@ -226,6 +238,7 @@ impl World {
 
         let water = level.water_map();
         let tails = Player::tails();
+        oscillation.init(&mut ram); // OscillateNumInit (0x5D26)
         let mut object_manager = crate::objects::ObjectManager::new(
             level.objects(),
             level.object_list_address(),
@@ -240,8 +253,14 @@ impl World {
             tails,
             water,
             object_manager,
-            objects: crate::objects::Objects::new(),
+            objects: crate::objects::Objects::with_assets(
+                globals.bridge.clone(),
+                globals.spring_slopes.clone(),
+                globals.spiral.clone(),
+            ),
             rings,
+            globals,
+            oscillation,
         })
     }
 
@@ -258,6 +277,16 @@ fn set_normal_speeds(ram: &mut Ram) {
     ram.w16(vars::SONIC_TOP_SPEED, 0x600);
     ram.w16(vars::SONIC_ACCELERATION, 0x0C);
     ram.w16(vars::SONIC_DECELERATION, 0x80);
+}
+
+/// The `noSignpost` list at 0x5F1E, indexed by `CurrentZoneAndAct` (`zone<<8 | act-1`).
+fn no_signpost(zone: u8, act: u8) -> bool {
+    const NO_SIGNPOST: [u16; 17] = [
+        0x0001, 0x0500, 0x0600, 0x0701, 0x0A01, 0x0B01, 0x0C01, 0x0D01, 0x0E00, 0x0F01, 0x1000,
+        0x1200, 0x1400, 0x1600, 0x1800, 0x1A00, 0x1C00,
+    ];
+    let key = ((zone as u16) << 8) | act.wrapping_sub(1) as u16;
+    NO_SIGNPOST.contains(&key)
 }
 
 /// `InitCameraValues` (0xDAEC) and the zone's own part (0xDC7C). The SMB3 zones have no part of their own.
@@ -284,6 +313,25 @@ fn init_camera_values(ram: &mut Ram, cam_x: i32, cam_y: i32, zone: u8) -> Result
     }
     if zone == 0x13 || zone == 0x14 || is_easter_egg(zone) {
         return Ok(()); // 0xDC98: Marble Zone and the SMB3 zones have no part of their own
+    }
+    if zone == 0x00 {
+        // 0xDB64 (Emerald Hill): background layer positions and the scroll state at $A800 cleared.
+        for a in [
+            vars::CAMERA_BG_X_POS,
+            vars::CAMERA_BG_Y_POS,
+            vars::CAMERA_BG2_Y_POS,
+            vars::CAMERA_BG3_Y_POS,
+            vars::TEMP_ARRAY_LAYER_DEF,
+            vars::TEMP_ARRAY_LAYER_DEF + 4,
+            vars::TEMP_ARRAY_LAYER_DEF + 8,
+            vars::CAMERA_BG_X_POS_P2,
+            vars::CAMERA_BG_Y_POS_P2,
+            vars::CAMERA_BG2_Y_POS_P2,
+            vars::CAMERA_BG3_Y_POS_P2,
+        ] {
+            ram.w32(a, 0);
+        }
+        return Ok(());
     }
     Err(Unported::new(
         0xDB1A,

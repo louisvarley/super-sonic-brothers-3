@@ -20,6 +20,16 @@ Schema: **id | file/function (legacy) | symptom | reproduction | status**
 
 _(No other confirmed game bugs yet; more will be added as the later milestones are replayed.)_
 
+### K2 — Tails' item pickups are gated by Sonic's invulnerability timer
+
+| | |
+|---|---|
+| **id** | K2 |
+| **file/function** | `legacy/src/SonicBros3/Logic/Level/TouchResponse.cs`, `Touch_ChkValue` (0x43A82): the invulnerability gate reads `ram.Sonic.InvulnerableTime` even when the touching player is Tails. |
+| **symptom** | During Sonic's hurt animation, Tails cannot collect spilled rings/items (or, depending on the timer, can collect while Sonic is invulnerable). The two players do not use their own timers. |
+| **reproduction** | Emerald Hill act 1 `jump`/`spindash` traces at ticks 329/294: using the touching player's timer lets Tails collect Sonic's spilled rings; the legacy trace does not. |
+| **port status** | Reproduced: the gate reads Sonic's timer for both players. `ehz_motion` asserts all 600 ticks match. **Not fixed.** |
+
 ## Suspected, to confirm during Phase 1/2
 
 | # | Area | Suspicion | How to confirm |

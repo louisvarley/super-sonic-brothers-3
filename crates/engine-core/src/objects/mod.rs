@@ -6,6 +6,7 @@
 //! instead of filling every slot.
 
 pub mod common;
+pub mod ehz;
 pub mod manager;
 pub mod smb3;
 pub mod solid;
@@ -17,6 +18,8 @@ pub use manager::ObjectManager;
 use crate::collision::CollisionSets;
 use crate::player;
 use crate::{vars, Obj, Ram};
+
+use crate::assets::{BridgeData, SpiralData, SpringSlopes};
 
 /// The SMB3 object ids (`Smb3` in the legacy `Smb3Objects.cs`).
 pub mod ids {
@@ -52,6 +55,12 @@ pub struct Objects {
     pub unported_seen: Vec<u8>,
     /// Set when the SMB3 goal roulette's message sequence ends (the legacy World.GoalCard).
     pub goal_card: Option<i32>,
+    /// Emerald Hill's bridge sag tables (`objects/bridge/bridge.json`).
+    pub bridge: Option<BridgeData>,
+    /// The diagonal springs' height tables.
+    pub spring_slopes: Option<SpringSlopes>,
+    /// The spiral's height and flip-angle tables.
+    pub spiral: Option<SpiralData>,
 }
 
 impl Default for Objects {
@@ -66,6 +75,22 @@ impl Objects {
             slot_counter: 0,
             unported_seen: Vec::new(),
             goal_card: None,
+            bridge: None,
+            spring_slopes: None,
+            spiral: None,
+        }
+    }
+
+    pub fn with_assets(
+        bridge: Option<BridgeData>,
+        spring_slopes: Option<SpringSlopes>,
+        spiral: Option<SpiralData>,
+    ) -> Self {
+        Self {
+            bridge,
+            spring_slopes,
+            spiral,
+            ..Self::new()
         }
     }
 
@@ -150,6 +175,9 @@ impl Objects {
         o: Obj,
         id: u8,
     ) -> Result<bool, crate::player::Unported> {
+        if ram.u8(vars::HACK_ZONE_FLAG) == 0 {
+            return self.run_s2_object(ram, sets, o, id);
+        }
         match id {
             ids::BLOCK => smb3::block(ram, sets, o)?,
             ids::GOOMBA | ids::PARAGOOMBA => smb3::goomba(ram, sets, o),
@@ -168,6 +196,45 @@ impl Objects {
             common_ids::GOAL => smb3::roulette_goal(ram, o, &mut self.goal_card),
             // Tails' tails (object $05) and the players' dust are display-only in the legacy code; they never
             // write to a player or an interactive object.
+            common_ids::TAILS_TAILS | common_ids::DUST => {}
+            _ => {
+                if !self.unported_seen.contains(&id) {
+                    self.unported_seen.push(id);
+                }
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The Sonic 2 column (`HackZoneFlag == 0`, `RegisterS2`/the object table's first column). The ids whose
+    /// routine is shared with the hack's column call the same handler; the EHZ-specific entries override it.
+    fn run_s2_object(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        o: Obj,
+        id: u8,
+    ) -> Result<bool, crate::player::Unported> {
+        match id {
+            0x03 => ehz::plane_switcher(ram, o),
+            0x06 => ehz::spiral(ram, o, self.spiral.as_ref())?,
+            0x11 => ehz::bridge(ram, o, self.bridge.as_ref())?,
+            0x18 => ehz::platform(ram, sets, o)?,
+            0x1C => ehz::scenery_s2(ram, o)?,
+            0x26 => ehz::monitor(ram, sets, o)?,
+            0x2E => ehz::monitor_contents(ram, o)?,
+            0x36 => ehz::spikes_s2(ram, sets, o)?,
+            0x41 => ehz::spring(ram, sets, o, self.spring_slopes.as_ref())?,
+            0x49 => ehz::waterfall(ram, o),
+            0x4B => ehz::buzzer(ram, o)?,
+            0x5C => ehz::masher(ram, o),
+            0x98 => ehz::coconut(ram, o)?,
+            0x9D => ehz::coconuts(ram, o)?,
+            common_ids::LOST_RINGS => common::lost_rings(ram, sets, o, self.slot_counter),
+            common_ids::EXPLOSION => common::explosion(ram, o),
+            common_ids::ANIMAL => common::animal(ram, o),
+            common_ids::POINTS => common::points(ram, o),
             common_ids::TAILS_TAILS | common_ids::DUST => {}
             _ => {
                 if !self.unported_seen.contains(&id) {
@@ -346,6 +413,7 @@ mod tests {
     #[test]
     fn dying_freezes_the_dynamic_slots() {
         let mut ram = Ram::new();
+        ram.w8(vars::HACK_ZONE_FLAG, 1);
         let sets = sets();
         let o = Obj::new(vars::FIRST_DYNAMIC_SLOT);
         o.set_id(&mut ram, ids::GOOMBA);

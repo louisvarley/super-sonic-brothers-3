@@ -174,8 +174,9 @@ fn respond(ram: &mut Ram, o: Obj, obj: Obj, flags: u8, d0: i32, d2: i32, d4: i32
     if (flags & 0x3F) == SIZE_MONITOR {
         return touch_monitor(ram, o, obj);
     }
-    // A collectable: hand it to the object, unless the player was just hurt.
-    let timer = o.invulnerable_time(ram);
+    // A collectable: hand it to the object, unless Sonic was just hurt (the original reads Sonic's timer even
+    // when Tails touched it).
+    let timer = Obj::new(vars::MAIN_CHARACTER).invulnerable_time(ram);
     if timer >= 0x5A {
         return 0;
     }

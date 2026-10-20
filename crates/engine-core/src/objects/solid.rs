@@ -72,6 +72,38 @@ pub fn solid_object(
     Ok(SolidResult { d4: r, d6 })
 }
 
+/// `SolidObject_Always`'s per-player body (0x1D52C) with the caller's `d6`.
+#[allow(clippy::too_many_arguments)]
+pub fn solid_always_one(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    p: Obj,
+    d1: i32,
+    d2: i32,
+    d3: i32,
+    d4: i32,
+    d6: &mut i32,
+) -> Result<i32, crate::player::Unported> {
+    per_player(ram, sets, o, p, d1, d2, d3, d4, d6, false)
+}
+
+/// `SolidObject`'s per-player body (0x1D4D4) with the caller's `d6`.
+#[allow(clippy::too_many_arguments)]
+pub fn solid_one(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    p: Obj,
+    d1: i32,
+    d2: i32,
+    d3: i32,
+    d4: i32,
+    d6: &mut i32,
+) -> Result<i32, crate::player::Unported> {
+    per_player(ram, sets, o, p, d1, d2, d3, d4, d6, true)
+}
+
 /// `SolidObject_Always` (0x1D516): no on-screen test.
 pub fn solid_object_always(
     ram: &mut Ram,
@@ -326,6 +358,152 @@ fn not_touching(ram: &mut Ram, o: Obj, p: Obj, d6: &mut i32) -> i32 {
 fn clear_push(ram: &mut Ram, o: Obj, p: Obj, d6: i32) {
     bclr(ram, o.address().wrapping_add(0x22), d6 + 2);
     bclr(ram, p.address().wrapping_add(0x22), 5);
+}
+
+// ------------------------------------------------------------------ sloped solids
+
+/// `SlopedSolid_SingleCharacter` (0x1D584): a solid object whose top follows a height table.
+#[allow(clippy::too_many_arguments)]
+pub fn sloped_solid_one(
+    ram: &mut Ram,
+    o: Obj,
+    p: Obj,
+    d1: i32,
+    d2: i32,
+    old_x: i32,
+    slope: &[i8],
+    d6: &mut i32,
+) -> Result<i32, crate::player::Unported> {
+    if bit(ram, o.address().wrapping_add(0x22), *d6) {
+        let width = (d1 * 2) & 0xFFFF;
+        if !p.in_air(ram) {
+            let x = (p.x(ram) as i32 - o.x(ram) as i32 + d1) & 0xFFFF;
+            if (x as i16) >= 0 && x < width {
+                move_with_slope(ram, o, p, d1, old_x, slope);
+                return Ok(0);
+            }
+        }
+        bclr(ram, p.address().wrapping_add(0x22), 3);
+        bset(ram, p.address().wrapping_add(0x22), 1);
+        bclr(ram, o.address().wrapping_add(0x22), *d6);
+        return Ok(0);
+    }
+    let d0 = (p.x(ram) as i32 - o.x(ram) as i32 + d1) & 0xFFFF;
+    if (d0 as i16) < 0 {
+        return Ok(not_touching(ram, o, p, d6));
+    }
+    let d3w = (d1 * 2) & 0xFFFF;
+    if d0 > d3w {
+        return Ok(not_touching(ram, o, p, d6));
+    }
+    let mut d5 = d0;
+    if o.render_flags(ram) & 1 != 0 {
+        d5 = ((!d5) + d3w) & 0xFFFF;
+    }
+    d5 >>= 1;
+    let d3 = slope.get(d5 as usize).copied().unwrap_or(0) as i32
+        - slope.first().copied().unwrap_or(0) as i32;
+    let d3 = d3 as i8 as i32;
+    let d5 = (o.y(ram) as i32 - d3) & 0xFFFF;
+    let d2 = (d2 + p.y_radius(ram) as i32) & 0xFFFF;
+    let d3 = (p.y(ram) as i32 - d5 + 4 + d2) & 0xFFFF;
+    if (d3 as i16) < 0 {
+        return Ok(not_touching(ram, o, p, d6));
+    }
+    let d4 = (d2 * 2) & 0xFFFF;
+    if d3 >= d4 {
+        return Ok(not_touching(ram, o, p, d6));
+    }
+    touching(ram, o, p, d0, d1, d2, d3, d4, d6)
+}
+
+/// 0x1D96A: a standing player rides the slope and the object's x movement.
+fn move_with_slope(ram: &mut Ram, o: Obj, p: Obj, d1: i32, old_x: i32, slope: &[i8]) {
+    if !bit(ram, p.address().wrapping_add(0x22), 3) {
+        return;
+    }
+    let mut d0 = ((p.x(ram) as i32 - o.x(ram) as i32 + d1) & 0xFFFF) >> 1;
+    if o.render_flags(ram) & 1 != 0 {
+        d0 = ((!d0) + d1) & 0xFFFF;
+    }
+    let h = slope.get(d0 as usize).copied().unwrap_or(0) as i32;
+    p.set_y(ram, (o.y(ram) as i32 - h - p.y_radius(ram) as i32) as u16);
+    p.set_x(ram, (p.x(ram) as i32 - (old_x - o.x(ram) as i32)) as u16);
+}
+
+// ------------------------------------------------------------------ platforms
+
+/// `PlatformObject` (0x1D9D0): top-solid only.
+pub fn platform_object(
+    ram: &mut Ram,
+    o: Obj,
+    d1: i32,
+    d3: i32,
+    old_x: i32,
+) -> Result<SolidResult, crate::player::Unported> {
+    let mut d6 = 3;
+    platform_per_player(
+        ram,
+        o,
+        Obj::new(vars::MAIN_CHARACTER),
+        d1,
+        d3,
+        old_x,
+        &mut d6,
+    )?;
+    d6 = (d6 & !0xFF) | ((d6 + 1) & 0xFF);
+    platform_per_player(ram, o, Obj::new(vars::SIDEKICK), d1, d3, old_x, &mut d6)?;
+    Ok(SolidResult { d4: 0, d6 })
+}
+
+fn platform_per_player(
+    ram: &mut Ram,
+    o: Obj,
+    p: Obj,
+    d1: i32,
+    d3: i32,
+    old_x: i32,
+    d6: &mut i32,
+) -> Result<(), crate::player::Unported> {
+    if !bit(ram, o.address().wrapping_add(0x22), *d6) {
+        platform_cont(ram, o, p, d1, d3, *d6);
+        return Ok(());
+    }
+    if !still_on(ram, o, p, d1, *d6) {
+        return Ok(());
+    }
+    move_on_platform(ram, o, p, old_x, d3);
+    Ok(())
+}
+
+/// `PlatformObject_cont` (0x1DB58): land on the top if falling onto it within its width.
+pub fn platform_cont(ram: &mut Ram, o: Obj, p: Obj, d1: i32, d3: i32, d6: i32) {
+    if p.y_vel(ram) < 0 {
+        return;
+    }
+    let d0 = (p.x(ram) as i32 - o.x(ram) as i32 + d1) & 0xFFFF;
+    if (d0 as i16) < 0 || d0 >= ((d1 * 2) & 0xFFFF) {
+        return;
+    }
+    chk_y_range(ram, o, p, (o.y(ram) as i32 - d3) as u16, d6);
+}
+
+/// `PlatformObject_ChkYRange` (0x1DB7C): feet within 16 px above the top -> stand on it.
+pub fn chk_y_range(ram: &mut Ram, o: Obj, p: Obj, top: u16, d6: i32) {
+    let y = p.y(ram);
+    let feet = (y as i32 + p.y_radius(ram) as i32 + 4) & 0xFFFF;
+    if top as i32 > feet {
+        return;
+    }
+    let d0 = (top as i32 - feet) & 0xFFFF;
+    if d0 < 0xFFF0 {
+        return;
+    }
+    if (p.obj_control(ram) as i8) < 0 || p.routine(ram) >= 6 {
+        return;
+    }
+    p.set_y(ram, (y as i32 + d0 as i16 as i32 + 3) as u16);
+    set_ride(ram, o, p, d6);
 }
 
 // ------------------------------------------------------------------ standing

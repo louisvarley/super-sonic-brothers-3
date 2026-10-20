@@ -5,6 +5,8 @@
 
 use crate::archive::{change_extension, resolve, Archive};
 use crate::{png, tiles};
+use engine_core::assets::{BridgeData, GlobalAssets, PaletteCycle, SpiralData, SpringSlopes};
+use engine_core::oscillation::OscillationData;
 pub use engine_core::world::{Bounds, Start};
 use engine_core::{vars, Ram};
 use serde_json::Value;
@@ -55,6 +57,8 @@ pub struct LevelData {
     pub gameplay: Option<Value>,
     /// Archive path of the act's music manifest, if present.
     pub music_file: Option<String>,
+    /// Data shared by every act (oscillation, bridge, ripple table, palette cycle).
+    pub globals: GlobalAssets,
 }
 
 impl LevelData {
@@ -201,6 +205,76 @@ impl LevelData {
             .transpose()?;
         let music_file = level["musicFile"].as_str().map(|p| resolve(&dir, p));
 
+        // ---- data shared by every act ----
+        let mut globals = GlobalAssets::default();
+        if let Ok(osc) = archive.read_json("objects/oscillation.json") {
+            let section = if zone >= 0x11 {
+                &osc["hack"]
+            } else {
+                &osc["normal"]
+            };
+            globals.oscillation = Some(OscillationData {
+                initial: word_array(&section["initial"]).unwrap_or_default(),
+                parameters: word_array(&section["parameters"]).unwrap_or_default(),
+            });
+        }
+        if let Ok(bridge) = archive.read_json("objects/bridge/bridge.json") {
+            globals.bridge = Some(BridgeData {
+                depression: u8_array(&bridge["depression"]).unwrap_or_default(),
+                bend: u8_array(&bridge["bend"]).unwrap_or_default(),
+                depression_first_subtype: bridge["depressionFirstSubtype"].as_i64().unwrap_or(0)
+                    as i32,
+            });
+        }
+        if let (Ok(data), Ok(edge)) = (
+            archive.read_json("objects/spring/diagonal-slopes.json"),
+            archive.read_json("objects/spring/diagonal-slopes-edge.json"),
+        ) {
+            let bytes = u8_array(&data["data"]).unwrap_or_default();
+            let edge_bytes = u8_array(&edge["data"]).unwrap_or_default();
+            let mut up = vec![0i8; 0x8000];
+            let mut down = vec![0i8; 0x8000];
+            for i in 0..0x1C.min(bytes.len()) {
+                up[i] = bytes[i] as i8;
+                if let Some(b) = bytes.get(0x1C + i) {
+                    down[i] = *b as i8;
+                }
+            }
+            up[0x7FFF] = edge_bytes.first().copied().unwrap_or(0) as i8;
+            down[0x7FFF] = edge_bytes.get(0x1C).copied().unwrap_or(0) as i8;
+            globals.spring_slopes = Some(SpringSlopes { up, down });
+        }
+        if let Ok(wave) = archive.read_json("objects/frontend/title-scroll.json") {
+            globals.wave_table = u8_array(&wave["data"]).unwrap_or_default();
+        }
+        if let (Ok(heights), Ok(angles)) = (
+            archive.read_json("objects/spiral/heights.json"),
+            archive.read_json("objects/spiral/flip-angles.json"),
+        ) {
+            globals.spiral = Some(SpiralData {
+                heights: u8_array(&heights["data"]).unwrap_or_default(),
+                flip_angles: u8_array(&angles["data"]).unwrap_or_default(),
+            });
+        }
+        if let Some(cycle_ref) = level["paletteCycle"].as_str() {
+            let cycle = archive.read_json(&resolve(&dir, cycle_ref))?;
+            globals.palette_cycle = Some(PaletteCycle {
+                colours: cycle["colours"]
+                    .as_array()
+                    .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect())
+                    .unwrap_or_default(),
+                timer_reload: cycle["timerReload"].as_i64().unwrap_or(0) as i16,
+                frames: cycle["frames"]
+                    .as_array()
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|r| word_array(r).unwrap_or_default())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            });
+        }
+
         Ok(Self {
             art,
             block_words,
@@ -218,6 +292,7 @@ impl LevelData {
             ring_groups,
             gameplay,
             music_file,
+            globals,
         })
     }
 
@@ -330,6 +405,10 @@ impl engine_core::world::LevelSource for LevelData {
             })
             .collect()
     }
+
+    fn globals(&self) -> GlobalAssets {
+        self.globals.clone()
+    }
 }
 
 fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -387,6 +466,18 @@ fn u8_array(v: &Value) -> Result<Vec<u8>, String> {
             x.as_u64()
                 .map(|n| n as u8)
                 .ok_or_else(|| "expected a byte value".to_string())
+        })
+        .collect()
+}
+
+fn word_array(v: &Value) -> Result<Vec<u16>, String> {
+    v.as_array()
+        .ok_or("expected an array of words")?
+        .iter()
+        .map(|x| {
+            x.as_u64()
+                .map(|n| n as u16)
+                .ok_or_else(|| "expected a word value".to_string())
         })
         .collect()
 }
