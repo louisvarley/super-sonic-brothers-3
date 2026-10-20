@@ -506,6 +506,45 @@ pub fn chk_y_range(ram: &mut Ram, o: Obj, p: Obj, top: u16, d6: i32) {
     set_ride(ram, o, p, d6);
 }
 
+/// `SlopedPlatform` (0x1DA28): top-solid with a height profile (one signed byte per 2 px).
+pub fn sloped_platform(ram: &mut Ram, o: Obj, d1: i32, old_x: i32, slope: &[i8]) {
+    for (p, d6) in [
+        (Obj::new(vars::MAIN_CHARACTER), 3),
+        (Obj::new(vars::SIDEKICK), 4),
+    ] {
+        if !bit(ram, o.address().wrapping_add(0x22), d6) {
+            if p.y_vel(ram) < 0 {
+                continue;
+            }
+            let d0 = (p.x(ram) as i32 - o.x(ram) as i32 + d1) & 0xFFFF;
+            let w = (d1 * 2) & 0xFFFF;
+            if (d0 as i16) < 0 || d0 >= w {
+                continue;
+            }
+            let mut index = d0;
+            if o.render_flags(ram) & 1 != 0 {
+                index = ((!index) + w) & 0xFFFF;
+            }
+            let d3 = slope.get((index >> 1) as usize).copied().unwrap_or(0) as i32;
+            chk_y_range(ram, o, p, (o.y(ram) as i32 - d3) as u16, d6);
+            continue;
+        }
+        if !still_on(ram, o, p, d1, d6) {
+            continue;
+        }
+        if !p.on_object(ram) {
+            continue;
+        }
+        let mut i = ((p.x(ram) as i32 - o.x(ram) as i32 + d1) & 0xFFFF) >> 1;
+        if o.render_flags(ram) & 1 != 0 {
+            i = ((!i) + d1) & 0xFFFF;
+        }
+        let h = slope.get(i as usize).copied().unwrap_or(0) as i32;
+        p.set_y(ram, (o.y(ram) as i32 - h - p.byte(ram, 0x16) as i32) as u16);
+        p.set_x(ram, (p.x(ram) as i32 - (old_x - o.x(ram) as i32)) as u16);
+    }
+}
+
 // ------------------------------------------------------------------ standing
 
 /// `MvSonicOnPtfm` (0x1D930): keep a standing player on top (d3 above y) and carry it by the object's x delta.

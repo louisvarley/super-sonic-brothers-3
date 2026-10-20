@@ -99,6 +99,12 @@ const SPECIAL = [
   { name: 'sonic-ehz-2-playing-right', zone: '00', act: 2, script: 'right0', frames: 600, noTitleCard: true },
   { name: 'sonic-ehz-2-playing-jump', zone: '00', act: 2, script: 'jump0', frames: 600, noTitleCard: true },
   { name: 'sonic-ehz-2-playing-spindash', zone: '00', act: 2, script: 'spindash0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-1-goal-playing', zone: '40', act: 1, debug: '2600,370', script: 'goal', frames: 1600, noTitleCard: true },
+  { name: 'smb3-1-2-goal-playing', zone: '41', act: 1, debug: '2670,370', script: 'goal12', frames: 1600, noTitleCard: true },
+  { name: 'smb3-1-3-goal-playing', zone: '42', act: 1, debug: '2350,396', script: 'goal13', frames: 1600, noTitleCard: true },
+  { name: 'sonic-ehz-2-boss-playing', zone: '00', act: 2, debug: '10704,1008', script: 'jump', frames: 2200, noTitleCard: true },
+  { name: 'sonic-mz-3-boss-playing', zone: '14', act: 1, debug: '6656,700', script: 'jump', frames: 2600, noTitleCard: true },
+  { name: 'sonic-ghz-3-boss-playing', zone: '12', act: 1, debug: '10752,640', script: 'jump', frames: 2600, noTitleCard: true },
 ];
 
 const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;

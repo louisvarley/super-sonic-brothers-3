@@ -1,7 +1,7 @@
 {
   "format": "sb3.golden-manifest/1",
   "generator": "tools/golden/generate.mjs",
-  "legacyCommit": "b50ebac7d6af718db1e49f8c0b462a0914ade916",
+  "legacyCommit": "21973c6479dd3098fc5b56cbece9e06701c282ee",
   "archive": {
     "path": "sonicbros3.bin",
     "sha256": "315d5b0f5b5cece51e3965864fca7f92f504849671d33f2a16676cebfdc82e5f"
@@ -7248,6 +7248,23 @@
       "data": "sonicbros3.bin"
     },
     {
+      "name": "smb3-1-1-goal-playing",
+      "file": "smb3-1-1-goal-playing.sb3g.gz",
+      "sha256": "bc78e05cdf4cf8355d6a24a2cdd77c0da2255d59876049e4899b5f80ac36c0ec",
+      "bytes": 66072,
+      "level": null,
+      "zone": 64,
+      "act": 1,
+      "world": null,
+      "campaignAct": null,
+      "debugStart": "2600,370",
+      "inputs": "goal",
+      "frames": 1600,
+      "start": "level",
+      "data": "sonicbros3.bin",
+      "noTitleCard": true
+    },
+    {
       "name": "smb3-1-1-idle",
       "file": "smb3-1-1-idle.sb3g.gz",
       "sha256": "ae2b7c2f2c323a278f8e99ff085e022d0e9f281935331e81d447c368b14f43b1",
@@ -7426,6 +7443,23 @@
       "frames": 1600,
       "start": "level",
       "data": "sonicbros3.bin"
+    },
+    {
+      "name": "smb3-1-2-goal-playing",
+      "file": "smb3-1-2-goal-playing.sb3g.gz",
+      "sha256": "738648a698f9dee1428a9ed1bb08117e02820df5fdceec5da149e865eaabbbeb",
+      "bytes": 65474,
+      "level": null,
+      "zone": 65,
+      "act": 1,
+      "world": null,
+      "campaignAct": null,
+      "debugStart": "2670,370",
+      "inputs": "goal12",
+      "frames": 1600,
+      "start": "level",
+      "data": "sonicbros3.bin",
+      "noTitleCard": true
     },
     {
       "name": "smb3-1-2-goomba-pipe",
@@ -7654,6 +7688,23 @@
       "frames": 1600,
       "start": "level",
       "data": "sonicbros3.bin"
+    },
+    {
+      "name": "smb3-1-3-goal-playing",
+      "file": "smb3-1-3-goal-playing.sb3g.gz",
+      "sha256": "c8388174e1f5cce60a90f9f34129d599b55a4c0fef8cd3e2e1ba34ee5899095f",
+      "bytes": 62339,
+      "level": null,
+      "zone": 66,
+      "act": 1,
+      "world": null,
+      "campaignAct": null,
+      "debugStart": "2350,396",
+      "inputs": "goal13",
+      "frames": 1600,
+      "start": "level",
+      "data": "sonicbros3.bin",
+      "noTitleCard": true
     },
     {
       "name": "smb3-1-3-idle",
@@ -7936,6 +7987,23 @@
       "data": "sonicbros3.bin"
     },
     {
+      "name": "sonic-ehz-2-boss-playing",
+      "file": "sonic-ehz-2-boss-playing.sb3g.gz",
+      "sha256": "4ad9151f0e44fb698fb104d03cb802f68fbd55ce4ecde770f2791b2d5b4af786",
+      "bytes": 108107,
+      "level": null,
+      "zone": 0,
+      "act": 2,
+      "world": null,
+      "campaignAct": null,
+      "debugStart": "10704,1008",
+      "inputs": "jump",
+      "frames": 2200,
+      "start": "level",
+      "data": "sonicbros3.bin",
+      "noTitleCard": true
+    },
+    {
       "name": "sonic-ehz-2-idle",
       "file": "sonic-ehz-2-idle.sb3g.gz",
       "sha256": "127a1e63ce7f7091b89fd9eef0930fca5ec73c3c74ea782c59826daa3ee858ca",
@@ -8196,6 +8264,23 @@
       "data": "sonicbros3.bin"
     },
     {
+      "name": "sonic-ghz-3-boss-playing",
+      "file": "sonic-ghz-3-boss-playing.sb3g.gz",
+      "sha256": "8ce0258a227b816a00b1545a3597122e2dee1695f3f06e36545168d73bde6047",
+      "bytes": 114926,
+      "level": null,
+      "zone": 18,
+      "act": 1,
+      "world": null,
+      "campaignAct": null,
+      "debugStart": "10752,640",
+      "inputs": "jump",
+      "frames": 2600,
+      "start": "level",
+      "data": "sonicbros3.bin",
+      "noTitleCard": true
+    },
+    {
       "name": "sonic-ghz-3-idle",
       "file": "sonic-ghz-3-idle.sb3g.gz",
       "sha256": "3f0bf94443082df453878f78949f4f93e8a8ee44f704db713ec96b9c6e834261",
@@ -8402,6 +8487,23 @@
       "frames": 2600,
       "start": "level",
       "data": "sonicbros3.bin"
+    },
+    {
+      "name": "sonic-mz-3-boss-playing",
+      "file": "sonic-mz-3-boss-playing.sb3g.gz",
+      "sha256": "6e52f30b5b4f9f4377886daa710e1f87f54b1721e4717450a673327fabc46d15",
+      "bytes": 131368,
+      "level": null,
+      "zone": 20,
+      "act": 1,
+      "world": null,
+      "campaignAct": null,
+      "debugStart": "6656,700",
+      "inputs": "jump",
+      "frames": 2600,
+      "start": "level",
+      "data": "sonicbros3.bin",
+      "noTitleCard": true
     },
     {
       "name": "sonic-mz-3-idle",

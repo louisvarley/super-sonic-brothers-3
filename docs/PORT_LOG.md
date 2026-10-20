@@ -393,6 +393,48 @@ contents ($2E), and `PlaneSwitcher`. `Solid` gained `SolidAlwaysOne`, `PlatformO
 Next (M4c-2): goal/signpost/starpost/giant-ring flow and the act-2 boss + EggPrison traces, then the Green Hill/Marble
 object sets.
 
+## 2026-10-20 — Phase 2 M4c-2: act completion and Sonic-zone bosses (verified)
+
+### New traces (generator, committed)
+`tools/golden/generate.mjs` now records, all `noTitleCard: true`:
+* `smb3-1-1-goal-playing`, `smb3-1-2-goal-playing`, `smb3-1-3-goal-playing` (zone/act raw sessions at the existing
+  goal debug starts, 1600 ticks, `goal`/`goal12`/`goal13`);
+* `sonic-ehz-2-boss-playing` (zone `$00`, act 2, debug `10704,1008`, 2200 ticks, `jump`);
+* `sonic-mz-3-boss-playing` (zone `$14`, debug `6656,700`, 2600 ticks, `jump`);
+* `sonic-ghz-3-boss-playing` (zone `$12`, debug `10752,640`, 2600 ticks, `jump`).
+
+The SMB3 goal traces must be generated with `--zone`/`--act` rather than `--level`: `Program.cs` only creates a raw
+`LevelSession` (which honours `--no-title-card`) when a zone is given; `--level` starts `GameFlow` and ignores it.
+
+### Camera/level setup
+* `Camera` gained `GhzEvents`/`Ghz3Events`, `Mz1Events`/`Mz2Events`/`Mz3Events`, `SwScrlGhz` and `SwScrlMz`.
+* Debug starts call only the zone's event routine (`Camera.RunLevelEvents`), not the max-Y easing, then set
+  `CameraMaxYPos` to the target — matching `World`'s debug-start block. Running full `DynamicLevelEvents` there made
+  the first MZ frame snap the camera from y 604 to 528.
+
+### Objects
+* EHZ boss `$56` and all its parts (ship, cockpit, ground car, three wheels, drill, propeller), including the
+  eight-hit/flash/defeat/fly-away path.
+* GHZ boss `$3D`, wrecking ball `$48` (+ chain links/ball), boss explosion `$58`, Buzz Bomber `$22`/missile `$23`.
+* MZ boss `$73`, lava ball `$14`, BossFire `$74`, Caterkiller `$78`, grass platform `$2F` (+ its sloped top).
+* Shared hack-column platform/spring corrected via the existing EHZ handlers.
+* Act-end objects: signpost `$0D` and results `$3A` (time/ring/perfect bonuses, tally, level-order next act),
+  star post `$79` (+ checkpoint save/load), giant ring `$4B`/`$DD` and flash `$DE` (special-stage request), egg
+  prison `$3E` (+ prison animals) and game over `$39`.
+
+### Verification
+* `cargo test -p engine-core --test act_end_motion -- --nocapture`: **6/6 traces match MOTION for 1600/2200/2600
+  ticks**.
+* `cargo test --workspace`: 68 engine-core unit tests, 1 act-end, 1 EHZ, 1 1-1, 1 SMB3 1-2/1-3, 2 golden-trace,
+  5 rom-assets — all pass.
+* `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+### Quirks
+* The GHZ/MZ debug-start traces exercise the level's hack-column object set; the object registry now dispatches the
+  shared platform/spring and the MZ/GHZ enemies by id there too.
+* `Results`/signpost are ported but not exercised by these six traces (the SMB3 goal is not a signpost act); the next
+  act load after results is ready for a future signpost trace.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

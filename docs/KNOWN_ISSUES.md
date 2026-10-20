@@ -30,6 +30,16 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **reproduction** | Emerald Hill act 1 `jump`/`spindash` traces at ticks 329/294: using the touching player's timer lets Tails collect Sonic's spilled rings; the legacy trace does not. |
 | **port status** | Reproduced: the gate reads Sonic's timer for both players. `ehz_motion` asserts all 600 ticks match. **Not fixed.** |
 
+### K3 - Debug starts run only the zone's event routine (not DynamicLevelEvents' max-Y easing)
+
+| | |
+|---|---|
+| **id** | K3 |
+| **file/function** | `legacy/src/SonicBros3/Logic/Level/Camera.cs`, `Camera.RunLevelEvents` (0x10804's zone half); `legacy/src/SonicBros3/Logic/Level/World.cs`, debug-start block after the first `ObjectManager.Run`. |
+| **symptom** | A debug start calls only `ZoneEvents` and then sets `CameraMaxYPos` to `CameraMaxYPosTarget`. It does **not** run the max-Y easing at the end of `DynamicLevelEvents`, and does not change `CameraYPos`. Running the full `DynamicLevelEvents` during setup sets `CameraMaxYPosChanging` and clamps the first vertical scroll to the new max (in MZ act 3, camera y 604 snaps to 528 instead of staying 604). |
+| **reproduction** | `sonic-mz-3-boss-playing`: debug start `6656,700`. The first tick has camera y 604. |
+| **port status** | Reproduced: `Camera::run_level_events` calls only `zone_events`, and `World::new_at` sets `CameraMaxYPos` afterwards. `act_end_motion` matches. **Not fixed.** |
+
 ## Suspected, to confirm during Phase 1/2
 
 | # | Area | Suspicion | How to confirm |

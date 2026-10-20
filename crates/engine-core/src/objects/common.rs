@@ -223,6 +223,16 @@ fn init_explosion(ram: &mut Ram, o: Obj) {
 /// `Animal` (0x14D5E): the animal freed by an explosion; a single rising hop.
 pub fn animal(ram: &mut Ram, o: Obj) {
     if o.routine(ram) == 0 {
+        if o.byte(ram, 0x38) != 0 {
+            o.set_routine(ram, 0x1C);
+            o.set_collision_flags(ram, 0);
+            o.set_priority(ram, 0);
+            o.set_render_flags(ram, 0x84);
+            if o.on_screen(ram) {
+                sprites::display_sprite(ram, o);
+            }
+            return;
+        }
         o.set_routine(ram, 2);
         o.set_mappings(ram, 0x14C4A);
         o.set_art_tile(ram, 0x84AC);
@@ -230,6 +240,21 @@ pub fn animal(ram: &mut Ram, o: Obj) {
         o.set_priority(ram, 1);
         o.set_width_pixels(ram, 8);
         o.set_y_vel(ram, -0x300);
+    }
+    if o.routine(ram) == 0x1C {
+        if !o.on_screen(ram) {
+            delete_object(ram, o);
+            return;
+        }
+        let delay = o.word(ram, 0x36).wrapping_sub(1);
+        o.set_word(ram, 0x36, delay);
+        if delay == 0 {
+            o.set_routine(ram, 2);
+            o.set_priority(ram, 1);
+            o.set_y_vel(ram, -0x300);
+        }
+        sprites::display_sprite(ram, o);
+        return;
     }
     if o.y_vel(ram) >= 0 {
         delete_object(ram, o);

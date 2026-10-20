@@ -42,6 +42,12 @@ pub struct GlobalAssets {
     pub bridge: Option<BridgeData>,
     pub spring_slopes: Option<SpringSlopes>,
     pub spiral: Option<SpiralData>,
+    /// Marble Zone's grass-platform height profiles (`objects/mz-grass-platform/heights.json`).
+    pub mz_heights: Vec<u8>,
+    /// Caterkiller's rise animation (`objects/mz-caterkiller/wave.json`).
+    pub mz_wave: Vec<u8>,
+    /// The results screen's level order (`objects/signpost/level-order.json`).
+    pub level_order: Vec<u8>,
     /// `objects/frontend/title-scroll.json`; indexed from 0xDFA8.
     pub wave_table: Vec<u8>,
     pub palette_cycle: Option<PaletteCycle>,

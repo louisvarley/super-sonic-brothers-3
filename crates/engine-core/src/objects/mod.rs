@@ -5,6 +5,8 @@
 //! `SlotCounter` many objects read). Object types that are not ported yet stay inert and despawn like the original
 //! instead of filling every slot.
 
+pub mod actend;
+pub mod boss;
 pub mod common;
 pub mod ehz;
 pub mod manager;
@@ -61,6 +63,12 @@ pub struct Objects {
     pub spring_slopes: Option<SpringSlopes>,
     /// The spiral's height and flip-angle tables.
     pub spiral: Option<SpiralData>,
+    /// Marble Zone's grass-platform height profiles.
+    pub mz_heights: Vec<u8>,
+    /// Caterkiller's rise animation.
+    pub mz_wave: Vec<u8>,
+    /// The results screen's level order.
+    pub level_order: Vec<u8>,
 }
 
 impl Default for Objects {
@@ -78,6 +86,9 @@ impl Objects {
             bridge: None,
             spring_slopes: None,
             spiral: None,
+            mz_heights: Vec::new(),
+            mz_wave: Vec::new(),
+            level_order: Vec::new(),
         }
     }
 
@@ -85,11 +96,17 @@ impl Objects {
         bridge: Option<BridgeData>,
         spring_slopes: Option<SpringSlopes>,
         spiral: Option<SpiralData>,
+        mz_heights: Vec<u8>,
+        mz_wave: Vec<u8>,
+        level_order: Vec<u8>,
     ) -> Self {
         Self {
             bridge,
             spring_slopes,
             spiral,
+            mz_heights,
+            mz_wave,
+            level_order,
             ..Self::new()
         }
     }
@@ -179,6 +196,24 @@ impl Objects {
             return self.run_s2_object(ram, sets, o, id);
         }
         match id {
+            0x14 => boss::lava_ball(ram, sets, o)?,
+            0x18 => ehz::platform(ram, sets, o)?,
+            0x22 => boss::buzz_bomber(ram, o),
+            0x23 => boss::missile(ram, o),
+            0x2F => boss::grass_platform(ram, sets, o, &self.mz_heights)?,
+            0x3D => boss::ghz_boss(ram, sets, o)?,
+            0x3E => actend::egg_prison(ram, sets, o)?,
+            0x39 => actend::game_over(ram, o),
+            0x3A => actend::results(ram, o, &self.level_order)?,
+            0x41 => ehz::spring(ram, sets, o, self.spring_slopes.as_ref())?,
+            0x48 => boss::wrecking_ball(ram, o)?,
+            0x4B => actend::giant_ring(ram, o),
+            0x58 => boss::boss_explosion(ram, o),
+            0x73 => boss::mz_boss(ram, sets, o)?,
+            0x74 => boss::boss_fire(ram, sets, o)?,
+            0x78 => boss::caterkiller(ram, sets, o, &self.mz_wave)?,
+            0x79 => actend::starpost(ram, o),
+            0xDE => actend::giant_ring_flash(ram, o),
             ids::BLOCK => smb3::block(ram, sets, o)?,
             ids::GOOMBA | ids::PARAGOOMBA => smb3::goomba(ram, sets, o),
             ids::KOOPA | ids::PARATROOPA => smb3::koopa(ram, sets, o),
@@ -193,7 +228,13 @@ impl Objects {
             common_ids::EXPLOSION => common::explosion(ram, o),
             common_ids::ANIMAL => common::animal(ram, o),
             common_ids::POINTS => common::points(ram, o),
-            common_ids::GOAL => smb3::roulette_goal(ram, o, &mut self.goal_card),
+            common_ids::GOAL => {
+                if crate::camera::is_easter_egg(ram.u8(vars::CURRENT_ZONE_AND_ACT)) {
+                    smb3::roulette_goal(ram, o, &mut self.goal_card)
+                } else {
+                    actend::signpost(ram, o)
+                }
+            }
             // Tails' tails (object $05) and the players' dust are display-only in the legacy code; they never
             // write to a player or an interactive object.
             common_ids::TAILS_TAILS | common_ids::DUST => {}
@@ -219,18 +260,27 @@ impl Objects {
         match id {
             0x03 => ehz::plane_switcher(ram, o),
             0x06 => ehz::spiral(ram, o, self.spiral.as_ref())?,
+            0x0D => actend::signpost(ram, o),
             0x11 => ehz::bridge(ram, o, self.bridge.as_ref())?,
             0x18 => ehz::platform(ram, sets, o)?,
             0x1C => ehz::scenery_s2(ram, o)?,
+            0x25 => {}
             0x26 => ehz::monitor(ram, sets, o)?,
             0x2E => ehz::monitor_contents(ram, o)?,
             0x36 => ehz::spikes_s2(ram, sets, o)?,
+            0x39 => actend::game_over(ram, o),
+            0x3A => actend::results(ram, o, &self.level_order)?,
+            0x3E => actend::egg_prison(ram, sets, o)?,
             0x41 => ehz::spring(ram, sets, o, self.spring_slopes.as_ref())?,
             0x49 => ehz::waterfall(ram, o),
             0x4B => ehz::buzzer(ram, o)?,
+            0x56 => boss::ehz_boss(ram, sets, o)?,
             0x5C => ehz::masher(ram, o),
+            0x79 => actend::starpost(ram, o),
             0x98 => ehz::coconut(ram, o)?,
             0x9D => ehz::coconuts(ram, o)?,
+            0xDD => actend::giant_ring(ram, o),
+            0xDE => actend::giant_ring_flash(ram, o),
             common_ids::LOST_RINGS => common::lost_rings(ram, sets, o, self.slot_counter),
             common_ids::EXPLOSION => common::explosion(ram, o),
             common_ids::ANIMAL => common::animal(ram, o),

@@ -247,6 +247,15 @@ impl LevelData {
         if let Ok(wave) = archive.read_json("objects/frontend/title-scroll.json") {
             globals.wave_table = u8_array(&wave["data"]).unwrap_or_default();
         }
+        if let Ok(heights) = archive.read_json("objects/mz-grass-platform/heights.json") {
+            globals.mz_heights = u8_array(&heights["data"]).unwrap_or_default();
+        }
+        if let Ok(wave) = archive.read_json("objects/mz-caterkiller/wave.json") {
+            globals.mz_wave = u8_array(&wave["data"]).unwrap_or_default();
+        }
+        if let Ok(order) = archive.read_json("objects/signpost/level-order.json") {
+            globals.level_order = u8_array(&order["data"]).unwrap_or_default();
+        }
         if let (Ok(heights), Ok(angles)) = (
             archive.read_json("objects/spiral/heights.json"),
             archive.read_json("objects/spiral/flip-angles.json"),

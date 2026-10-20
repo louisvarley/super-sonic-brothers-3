@@ -43,7 +43,29 @@ impl Session {
         sonic_animation: SonicAnimation,
         tails_animation: TailsAnimation,
     ) -> Result<Self, Unported> {
-        let world = World::new(level.as_ref(), zone, act, None)?;
+        Self::new_with_start(
+            level,
+            zone,
+            act,
+            sets,
+            sonic_animation,
+            tails_animation,
+            None,
+        )
+    }
+
+    /// As [`Session::new`], but with a debug start for the first load only (the legacy `--debug-start`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_start(
+        level: Box<dyn LevelSource>,
+        zone: u8,
+        act: u8,
+        sets: CollisionSets,
+        sonic_animation: SonicAnimation,
+        tails_animation: TailsAnimation,
+        debug_start: Option<crate::world::Start>,
+    ) -> Result<Self, Unported> {
+        let world = World::new_at(level.as_ref(), zone, act, None, debug_start)?;
         let camera_x = world.camera_x();
         let camera_y = world.camera_y();
         Ok(Self {

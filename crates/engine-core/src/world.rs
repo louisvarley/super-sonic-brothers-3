@@ -101,6 +101,17 @@ impl World {
         act: u8,
         previous: Option<Ram>,
     ) -> Result<Self, Unported> {
+        Self::new_at(level, zone, act, previous, None)
+    }
+
+    /// Build one act at an optional debug start (the legacy `Level.WithStart`); the act's own start otherwise.
+    pub fn new_at(
+        level: &dyn LevelSource,
+        zone: u8,
+        act: u8,
+        previous: Option<Ram>,
+        debug_start: Option<Start>,
+    ) -> Result<Self, Unported> {
         let mut ram = Ram::new();
         let new_game = previous.is_none();
         if let Some(prev) = previous {
@@ -156,9 +167,12 @@ impl World {
         ram.w16(vars::CAMERA_Y_POS_BIAS, 0x60);
         ram.w8(vars::MAIN_CHARACTER, 1);
         let sonic = Player::sonic();
-        let start = level.start();
+        let start = debug_start.unwrap_or_else(|| level.start());
         sonic.obj.set_x(&mut ram, start.x as u16);
         sonic.obj.set_y(&mut ram, start.y as u16);
+        if ram.u8(vars::LAST_STAR_POLE_HIT) != 0 {
+            crate::objects::actend::starpost_load(&mut ram);
+        }
         let start_x = sonic.obj.x(&ram) as i32;
         let start_y = sonic.obj.y(&ram) as i32;
 
@@ -246,6 +260,22 @@ impl World {
         );
         object_manager.run(&mut ram); // level init runs the object manager once before the first frame
         rings.run(&mut ram); // and lays out the ring window
+        if debug_start.is_some() {
+            // Debug starts skip the level events that normally lower the bottom limit on the way there.
+            let mut camera = crate::camera::Camera;
+            camera.run_level_events(&mut ram)?;
+            ram.w16(
+                vars::CAMERA_MAX_Y_POS,
+                ram.u16(vars::CAMERA_MAX_Y_POS_TARGET),
+            );
+            // InitCameraValues puts background layers 2/3 at the camera x, which is right at an act start; for a
+            // debug start, put them where scrolling there from x 0 would have (Green Hill: x/2 and x*3/8).
+            if matches!(zone, 0x11 | 0x12) && ram.u8(vars::LAST_STAR_POLE_HIT) == 0 {
+                let cx = ram.u16(vars::CAMERA_X_POS) as u32;
+                ram.w32(vars::CAMERA_BG2_X_POS, cx << 15);
+                ram.w32(vars::CAMERA_BG3_X_POS, cx.wrapping_mul(0x6000));
+            }
+        }
 
         Ok(Self {
             ram,
@@ -257,6 +287,9 @@ impl World {
                 globals.bridge.clone(),
                 globals.spring_slopes.clone(),
                 globals.spiral.clone(),
+                globals.mz_heights.clone(),
+                globals.mz_wave.clone(),
+                globals.level_order.clone(),
             ),
             rings,
             globals,
@@ -313,6 +346,20 @@ fn init_camera_values(ram: &mut Ram, cam_x: i32, cam_y: i32, zone: u8) -> Result
     }
     if zone == 0x13 || zone == 0x14 || is_easter_egg(zone) {
         return Ok(()); // 0xDC98: Marble Zone and the SMB3 zones have no part of their own
+    }
+    if zone == 0x11 || zone == 0x12 {
+        for a in [
+            vars::CAMERA_BG_X_POS,
+            vars::CAMERA_BG_Y_POS,
+            vars::CAMERA_BG2_Y_POS,
+            vars::CAMERA_BG3_Y_POS,
+        ] {
+            ram.w32(a, 0);
+        }
+        for i in 0..12 {
+            ram.w8(vars::CLOUD_COUNTERS + i, 0);
+        }
+        return Ok(());
     }
     if zone == 0x00 {
         // 0xDB64 (Emerald Hill): background layer positions and the scroll state at $A800 cleared.

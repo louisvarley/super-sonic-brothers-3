@@ -34,6 +34,11 @@ pub fn is_zone_ported(zone: u8) -> bool {
 pub struct Camera;
 
 impl Camera {
+    /// `DeformBgLayer`'s level-event half, used once by a debug start (the legacy `Camera.RunLevelEvents`).
+    pub fn run_level_events(&mut self, ram: &mut Ram) -> Result<(), Unported> {
+        self.zone_events(ram)
+    }
+
     /// `DeformBgLayer` (0xDCD6) for one frame.
     pub fn deform_bg_layer(&mut self, ram: &mut Ram, wave_table: &[u8]) -> Result<(), Unported> {
         if ram.u8(vars::DEFORM_LOCK) != 0 {
@@ -77,6 +82,10 @@ impl Camera {
             self.sw_scrl_easter_egg(ram);
         } else if zone == 0x00 {
             self.sw_scrl_ehz(ram, wave_table);
+        } else if zone == 0x11 || zone == 0x12 {
+            self.sw_scrl_ghz(ram);
+        } else if zone == 0x13 || zone == 0x14 {
+            self.sw_scrl_mz(ram);
         } else {
             return Err(Unported::new(
                 0xDDF2,
@@ -314,8 +323,8 @@ impl Camera {
         old
     }
 
-    /// `DynamicLevelEvents` (0x10804): per-zone events, then ease `Camera_Max_Y` toward its target.
-    fn dynamic_level_events(&mut self, ram: &mut Ram) -> Result<(), Unported> {
+    /// The per-zone part of `DynamicLevelEvents`.
+    fn zone_events(&mut self, ram: &mut Ram) -> Result<(), Unported> {
         let zone = ram.u8(vars::CURRENT_ZONE_AND_ACT);
         let act = ram.u8(vars::CURRENT_ZONE_AND_ACT.wrapping_add(1));
         if !is_zone_ported(zone) {
@@ -326,12 +335,28 @@ impl Camera {
         }
         if zone == 0x00 {
             self.ehz_events(ram, act);
+        } else if zone == 0x11 || zone == 0x12 {
+            self.ghz_events(ram, act);
+        } else if zone == 0x13 {
+            if act == 0 {
+                self.mz1_events(ram);
+            } else {
+                self.mz2_events(ram);
+            }
+        } else if zone == 0x14 {
+            self.mz3_events(ram);
         } else if !is_easter_egg(zone) {
             return Err(Unported::new(
                 0x10804,
                 format!("level events for zone {zone:02X}"),
             ));
         }
+        Ok(())
+    }
+
+    /// `DynamicLevelEvents` (0x10804): per-zone events, then ease `Camera_Max_Y` toward its target.
+    fn dynamic_level_events(&mut self, ram: &mut Ram) -> Result<(), Unported> {
+        self.zone_events(ram)?;
 
         let target = ram.u16(vars::CAMERA_MAX_Y_POS_TARGET);
         let max = ram.u16(vars::CAMERA_MAX_Y_POS);
@@ -363,7 +388,376 @@ impl Camera {
         Ok(())
     }
 
-    /// Emerald Hill (zone $00, Sonic 2's events, 0x108A4). Act 1 has none. Act 2: past x $2780 the left limit
+    /// Green Hill events (0x11872 / 0x118F8). Act 3 places Eggman at x $2A60 and locks the arena at $2960.
+    fn ghz_events(&mut self, ram: &mut Ram, act: u8) {
+        let cam_x = ram.u16(vars::CAMERA_X_POS);
+        if ram.u8(vars::CURRENT_ZONE_AND_ACT) == 0x12 {
+            match ram.u8(vars::DYNAMIC_RESIZE_ROUTINE) {
+                0 => {
+                    set_bottom_target(ram, 0x300);
+                    if cam_x < 0x380 {
+                        return;
+                    }
+                    set_bottom_target(ram, 0x310);
+                    if cam_x < 0x960 {
+                        return;
+                    }
+                    if ram.u16(vars::CAMERA_Y_POS) >= 0x280 {
+                        set_bottom_target(ram, 0x400);
+                        if cam_x < 0x1380 {
+                            ram.w16(vars::CAMERA_MAX_Y_POS, 0x4C0);
+                        }
+                        if cam_x < 0x1380 {
+                            set_bottom_target(ram, 0x4C0);
+                        }
+                        if cam_x < 0x1700 {
+                            return;
+                        }
+                    }
+                    set_bottom_target(ram, 0x300);
+                    next_event(ram);
+                }
+                2 => {
+                    if cam_x < 0x960 {
+                        let r = ram.u8(vars::DYNAMIC_RESIZE_ROUTINE).wrapping_sub(2);
+                        ram.w8(vars::DYNAMIC_RESIZE_ROUTINE, r);
+                    }
+                    if cam_x < 0x2960 {
+                        return;
+                    }
+                    if let Some(boss) = crate::objects::find_free_slot(ram) {
+                        boss.set_id(ram, 0x3D);
+                        boss.set_x(ram, 0x2A60);
+                        boss.set_y(ram, 0x280);
+                    }
+                    set_left(ram, 0x2960);
+                    set_right(ram, 0x2960);
+                    next_event(ram);
+                    ram.w8(vars::CURRENT_BOSS_ID, 1);
+                }
+                _ => {
+                    set_left(ram, cam_x);
+                }
+            }
+            return;
+        }
+        match act {
+            0 => {
+                set_bottom_target(ram, 0x300);
+                if cam_x >= 0x1780 {
+                    set_bottom_target(ram, 0x400);
+                    ram.w16(vars::CAMERA_MAX_Y_POS, 0x400);
+                }
+            }
+            1 => {
+                set_bottom_target(ram, 0x300);
+                if cam_x < 0xED0 {
+                    return;
+                }
+                set_bottom_target(ram, 0x200);
+                if cam_x < 0x1600 {
+                    return;
+                }
+                set_bottom_target(ram, 0x400);
+                if cam_x < 0x1D60 {
+                    return;
+                }
+                set_bottom_target(ram, 0x300);
+            }
+            _ => {}
+        }
+    }
+
+    /// Marble Zone act 1/2/3 events (0x11A02 / 0x11B5E / 0x11B80).
+    fn mz1_events(&mut self, ram: &mut Ram) {
+        let cam_x = ram.u16(vars::CAMERA_X_POS);
+        let cam_y = ram.u16(vars::CAMERA_Y_POS);
+        match ram.u8(vars::DYNAMIC_RESIZE_ROUTINE) {
+            0 => {
+                set_bottom_target(ram, 0x1D0);
+                if cam_x < 0x700 {
+                    return;
+                }
+                set_bottom_target(ram, 0x220);
+                if cam_x < 0xD00 {
+                    return;
+                }
+                set_bottom_target(ram, 0x340);
+                if cam_y < 0x340 {
+                    return;
+                }
+                next_event(ram);
+            }
+            2 => {
+                ram.w16(
+                    vars::TAILS_MAX_Y_POS,
+                    ram.u16(vars::CAMERA_MAX_Y_POS_TARGET),
+                );
+                if cam_y < 0x340 {
+                    let r = ram.u8(vars::DYNAMIC_RESIZE_ROUTINE).wrapping_sub(2);
+                    ram.w8(vars::DYNAMIC_RESIZE_ROUTINE, r);
+                    return;
+                }
+                set_top(ram, 0);
+                if cam_x >= 0xE00 {
+                    return;
+                }
+                set_top(ram, 0x340);
+                set_bottom_target(ram, 0x340);
+                if cam_x >= 0xA90 {
+                    return;
+                }
+                set_bottom_target(ram, 0x500);
+                if cam_y >= 0x370 {
+                    next_event(ram);
+                }
+            }
+            4 => {
+                ram.w16(
+                    vars::TAILS_MAX_Y_POS,
+                    ram.u16(vars::CAMERA_MAX_Y_POS_TARGET),
+                );
+                if cam_y < 0x370 {
+                    let r = ram.u8(vars::DYNAMIC_RESIZE_ROUTINE).wrapping_sub(2);
+                    ram.w8(vars::DYNAMIC_RESIZE_ROUTINE, r);
+                    return;
+                }
+                if cam_y >= 0x500 && cam_x >= 0xB80 {
+                    set_top(ram, 0x500);
+                    next_event(ram);
+                }
+            }
+            6 => {
+                if cam_x < 0xB80 {
+                    if ram.u16(vars::CAMERA_MIN_Y_POS) == 0x340 {
+                        return;
+                    }
+                    ram.w16(
+                        vars::CAMERA_MIN_Y_POS,
+                        ram.u16(vars::CAMERA_MIN_Y_POS).wrapping_sub(2),
+                    );
+                    ram.w16(
+                        vars::TAILS_MIN_Y_POS,
+                        ram.u16(vars::TAILS_MIN_Y_POS).wrapping_sub(2),
+                    );
+                    return;
+                }
+                if ram.u16(vars::CAMERA_MIN_Y_POS) != 0x500 {
+                    if cam_y < 0x500 {
+                        return;
+                    }
+                    set_top(ram, 0x500);
+                }
+                if cam_x < 0xE70 {
+                    return;
+                }
+                set_top(ram, 0);
+                set_bottom_target(ram, 0x500);
+                if cam_x < 0x1430 {
+                    return;
+                }
+                set_bottom_target(ram, 0x210);
+            }
+            _ => {}
+        }
+    }
+
+    fn mz2_events(&mut self, ram: &mut Ram) {
+        set_bottom_target(ram, 0x520);
+        if ram.u16(vars::CAMERA_X_POS) >= 0x1700 {
+            set_bottom_target(ram, 0x200);
+        }
+    }
+
+    fn mz3_events(&mut self, ram: &mut Ram) {
+        let cam_x = ram.u16(vars::CAMERA_X_POS);
+        if ram.u8(vars::DYNAMIC_RESIZE_ROUTINE) != 0 {
+            set_left(ram, cam_x);
+            return;
+        }
+        set_bottom_target(ram, 0x720);
+        if cam_x < 0x1560 {
+            return;
+        }
+        set_bottom_target(ram, 0x210);
+        if cam_x < 0x17F0 {
+            return;
+        }
+        if let Some(boss) = crate::objects::find_free_slot(ram) {
+            boss.set_id(ram, 0x73);
+            boss.set_x(ram, 0x19F0);
+            boss.set_y(ram, 0x22C);
+        }
+        set_left(ram, 0x1800);
+        set_right(ram, 0x1800);
+        ram.w8(vars::DYNAMIC_RESIZE_ROUTINE, 2);
+        ram.w8(vars::CURRENT_BOSS_ID, 1);
+    }
+
+    /// `SwScrlGhz` (0xF006): Green Hill's parallax clouds and water.
+    fn sw_scrl_ghz(&mut self, ram: &mut Ram) {
+        let diff = ram.u16(vars::CAMERA_X_POS_DIFF) as i16 as i32;
+        bg_scroll(
+            ram,
+            vars::CAMERA_BG3_X_POS,
+            vars::HORIZ_BLOCK_CROSSED_FLAG_BG3,
+            vars::SCROLL_FLAGS_BG3,
+            diff * 96,
+            0,
+        );
+        bg_scroll(
+            ram,
+            vars::CAMERA_BG2_X_POS,
+            vars::HORIZ_BLOCK_CROSSED_FLAG_BG2,
+            vars::SCROLL_FLAGS_BG2,
+            diff << 7,
+            0,
+        );
+
+        let mut a1 = vars::HORIZ_SCROLL_BUF;
+        let mut d0 = ((ram.u16(vars::CAMERA_Y_POS) & 0x7FF) >> 5) as i32;
+        d0 = -d0 + 0x20;
+        if d0 < 0 {
+            d0 = 0;
+        }
+        let d4 = d0;
+        ram.w16(vars::VSCROLL_FACTOR_BG, d0 as u16);
+        let fg = (-(ram.u16(vars::CAMERA_X_POS) as i32)) as u16;
+
+        ram.w32(
+            vars::CLOUD_COUNTERS,
+            ram.u32(vars::CLOUD_COUNTERS).wrapping_add(0x10000),
+        );
+        ram.w32(
+            vars::CLOUD_COUNTERS + 4,
+            ram.u32(vars::CLOUD_COUNTERS + 4).wrapping_add(0xC000),
+        );
+        ram.w32(
+            vars::CLOUD_COUNTERS + 8,
+            ram.u32(vars::CLOUD_COUNTERS + 8).wrapping_add(0x8000),
+        );
+        let bg3 = ram.u16(vars::CAMERA_BG3_X_POS);
+
+        let lines = |ram: &mut Ram, a1: &mut u16, count: i32, bg: u16| {
+            for _ in 0..count {
+                line(ram, a1, fg, bg);
+            }
+        };
+        let n = 0x1F - d4;
+        if n >= 0 {
+            let bg = (-(ram.u16(vars::CLOUD_COUNTERS).wrapping_add(bg3) as i32)) as u16;
+            lines(ram, &mut a1, n + 1, bg);
+        }
+        let bg = (-(ram.u16(vars::CLOUD_COUNTERS + 4).wrapping_add(bg3) as i32)) as u16;
+        lines(ram, &mut a1, 16, bg);
+        let bg = (-(ram.u16(vars::CLOUD_COUNTERS + 8).wrapping_add(bg3) as i32)) as u16;
+        lines(ram, &mut a1, 16, bg);
+        lines(ram, &mut a1, 0x30, (-(bg3 as i32)) as u16);
+        let bg2 = ram.u16(vars::CAMERA_BG2_X_POS);
+        lines(ram, &mut a1, 0x28, (-(bg2 as i32)) as u16);
+
+        let mut d2 = (ram.u16(vars::CAMERA_X_POS).wrapping_sub(bg2)) as i16 as i32;
+        d2 = ((d2 << 8) / 0x68) << 8;
+        let mut d3 = (bg2 as i64) << 16;
+        for _ in 0..=0x47 + d4 {
+            ram.w16(a1, fg);
+            ram.w16(a1.wrapping_add(2), (-(d3 >> 16) as i32) as u16);
+            a1 = a1.wrapping_add(4);
+            d3 = (d3 + d2 as i64) & 0xFFFF_FFFF;
+        }
+    }
+
+    /// `SwScrlMz` (0xF0F6): Marble Zone's parallax layers and band table.
+    fn sw_scrl_mz(&mut self, ram: &mut Ram) {
+        let diff = ram.u16(vars::CAMERA_X_POS_DIFF) as i16 as i32;
+        layer_scroll(
+            ram,
+            vars::CAMERA_BG_X_POS,
+            vars::HORIZ_BLOCK_CROSSED_FLAG_BG,
+            vars::SCROLL_FLAGS_BG,
+            (diff << 6) * 3,
+            2,
+        );
+        layer_scroll(
+            ram,
+            vars::CAMERA_BG3_X_POS,
+            vars::HORIZ_BLOCK_CROSSED_FLAG_BG3,
+            vars::SCROLL_FLAGS_BG3,
+            diff << 6,
+            6,
+        );
+        layer_scroll(
+            ram,
+            vars::CAMERA_BG2_X_POS,
+            vars::HORIZ_BLOCK_CROSSED_FLAG_BG2,
+            vars::SCROLL_FLAGS_BG2,
+            diff << 7,
+            4,
+        );
+        let mut d0 = 0x200i32;
+        let d1 = ram.u16(vars::CAMERA_Y_POS).wrapping_sub(0x1C8) as i16 as i32;
+        if ram.u16(vars::CAMERA_Y_POS) >= 0x1C8 {
+            d0 += (d1 * 3) >> 2;
+        }
+        let d0 = d0 as u16;
+        ram.w16(vars::CAMERA_BG2_Y_POS, d0);
+        ram.w16(vars::CAMERA_BG3_Y_POS, d0);
+        set_bg_y(ram, d0);
+        ram.w16(vars::VSCROLL_FACTOR_BG, ram.u16(vars::CAMERA_BG_Y_POS));
+        let combined = ram.u8(vars::SCROLL_FLAGS_BG3)
+            | ram.u8(vars::SCROLL_FLAGS_BG)
+            | ram.u8(vars::SCROLL_FLAGS_BG2);
+        ram.w8(vars::SCROLL_FLAGS_BG3, combined);
+        ram.w8(vars::SCROLL_FLAGS_BG, 0);
+        ram.w8(vars::SCROLL_FLAGS_BG2, 0);
+
+        let mut a1 = vars::CLOUD_COUNTERS;
+        let d2 = (-(ram.u16(vars::CAMERA_X_POS) as i32)) as u16 as i16 as i32;
+        let step = ((((d2 >> 2) - d2) * 8) / 5) as i16;
+        let mut acc = ((d2 >> 1) & 0xFFFF) as u32;
+        acc <<= 16;
+        for _ in 0..5 {
+            ram.w16(a1, (acc >> 16) as u16);
+            a1 = a1.wrapping_add(2);
+            acc = acc.wrapping_add((step as u32) << 12);
+        }
+        let bg3 = (-(ram.u16(vars::CAMERA_BG3_X_POS) as i32)) as u16;
+        for _ in 0..2 {
+            ram.w16(a1, bg3);
+            a1 = a1.wrapping_add(2);
+        }
+        let bg2 = (-(ram.u16(vars::CAMERA_BG2_X_POS) as i32)) as u16;
+        for _ in 0..9 {
+            ram.w16(a1, bg2);
+            a1 = a1.wrapping_add(2);
+        }
+        let bg1 = (-(ram.u16(vars::CAMERA_BG_X_POS) as i32)) as u16;
+        for _ in 0..16 {
+            ram.w16(a1, bg1);
+            a1 = a1.wrapping_add(2);
+        }
+
+        let y = ram.u16(vars::CAMERA_BG_Y_POS).wrapping_sub(0x200);
+        let mut a2 = vars::CLOUD_COUNTERS + (((if y >= 0x100 { 0x100 } else { y }) & 0x1F0) >> 3);
+        let fg = (-(ram.u16(vars::CAMERA_X_POS) as i32)) as u16;
+        let mut line = 0i32;
+        let first = 16 - (y & 0xF) as i32;
+        let mut bg = ram.u16(a2);
+        a2 = a2.wrapping_add(2);
+        for _ in 0..first {
+            write_bg_line(ram, &mut line, fg, bg);
+        }
+        for _ in 0..15 {
+            bg = ram.u16(a2);
+            a2 = a2.wrapping_add(2);
+            for _ in 0..16 {
+                write_bg_line(ram, &mut line, fg, bg);
+            }
+        }
+    }
+
+    /// Emerald Hill (zone $00, Sonic 2's events, 0x108A4).
+    /// Act 1 has none. Act 2: past x $2780 the left limit
     /// follows the camera and the bottom limit becomes $390; at $28F0 the arena locks ($28F0-$2940), the music
     /// fades, the boss flag becomes 2 and the boss art loads (PLC $29); once the camera is down at $388, 90
     /// frames later the boss (object $56, subtype $81) appears at $29D0,$426 with the boss music; once it is
@@ -523,6 +917,71 @@ fn set_left(ram: &mut Ram, x: u16) {
 fn set_right(ram: &mut Ram, x: u16) {
     ram.w16(vars::CAMERA_MAX_X_POS, x);
     ram.w16(vars::TAILS_MAX_X_POS, x);
+}
+
+fn set_top(ram: &mut Ram, y: u16) {
+    ram.w16(vars::CAMERA_MIN_Y_POS, y);
+    ram.w16(vars::TAILS_MIN_Y_POS, y);
+}
+
+fn set_bottom_target(ram: &mut Ram, y: u16) {
+    ram.w16(vars::CAMERA_MAX_Y_POS_TARGET, y);
+    ram.w16(vars::TAILS_MAX_Y_POS, y);
+}
+
+fn bg_scroll(ram: &mut Ram, pos: u16, toggle: u16, flags: u16, delta: i32, bit: u8) {
+    let old = ram.u32(pos);
+    let now = old.wrapping_add(delta as u32);
+    ram.w32(pos, now);
+    let d1 = ((now >> 16) as i32) & 0x10;
+    if d1 ^ ram.u8(toggle) as i32 != 0 {
+        return;
+    }
+    ram.w8(toggle, ram.u8(toggle) ^ 0x10);
+    if (now.wrapping_sub(old) as i32) < 0 {
+        ram.set_bit(flags, bit);
+    } else {
+        ram.set_bit(flags, bit + 1);
+    }
+}
+
+fn layer_scroll(ram: &mut Ram, pos: u16, toggle: u16, flags: u16, delta: i32, bit: u8) {
+    bg_scroll(ram, pos, toggle, flags, delta, bit);
+}
+
+fn set_bg_y(ram: &mut Ram, y: u16) {
+    let old = ram.u16(vars::CAMERA_BG_Y_POS);
+    ram.w16(vars::CAMERA_BG_Y_POS, y);
+    let crossed = ((y & 0x10) as u8 ^ ram.u8(vars::VERTI_BLOCK_CROSSED_FLAG_BG)) != 0;
+    if crossed {
+        return;
+    }
+    ram.w8(
+        vars::VERTI_BLOCK_CROSSED_FLAG_BG,
+        ram.u8(vars::VERTI_BLOCK_CROSSED_FLAG_BG) ^ 0x10,
+    );
+    if (y.wrapping_sub(old) as i16) < 0 {
+        ram.set_bit(vars::SCROLL_FLAGS_BG, 0);
+    } else {
+        ram.set_bit(vars::SCROLL_FLAGS_BG, 1);
+    }
+}
+
+fn write_bg_line(ram: &mut Ram, line: &mut i32, fg: u16, bg: u16) {
+    if *line >= 0x100 {
+        return;
+    }
+    ram.w16(
+        vars::HORIZ_SCROLL_BUF.wrapping_add((*line as u16).wrapping_mul(4)),
+        fg,
+    );
+    ram.w16(
+        vars::HORIZ_SCROLL_BUF
+            .wrapping_add((*line as u16).wrapping_mul(4))
+            .wrapping_add(2),
+        bg,
+    );
+    *line += 1;
 }
 
 #[cfg(test)]
