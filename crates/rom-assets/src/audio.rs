@@ -110,10 +110,26 @@ fn load_pcm_effects_from_archive(archive: &Archive) -> Vec<PcmEffect> {
 }
 
 fn load_pcm_effects_from_dir() -> Vec<PcmEffect> {
-    let candidates = [
-        std::path::PathBuf::from("web-data/effects"),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web-data/effects"),
-    ];
+    let mut roots = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut current = Some(cwd.as_path());
+        while let Some(dir) = current {
+            roots.push(dir.to_path_buf());
+            current = dir.parent();
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut current = exe.parent();
+        while let Some(dir) = current {
+            if !roots.iter().any(|root| root == dir) {
+                roots.push(dir.to_path_buf());
+            }
+            current = dir.parent();
+        }
+    }
+    let candidates = roots
+        .into_iter()
+        .flat_map(|root| [root.join("web-data/effects"), root.join("effects")]);
     for dir in candidates {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

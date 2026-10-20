@@ -1,7 +1,7 @@
 //! Native windowed front-end for the Rust port.
 //!
 //! It opens the derived archive, then either starts directly in a level (`--level`/`--zone`) or, when the archive has
-//! `campaign/campaign.json`, in the SMB3 world map (`--map`, `--world`, `--map-screen`, `--campaign-act`). The 68k
+//! `campaign/campaign.json`, at the SMB3 title/curtain (then the world map; `--map` skips the title). The 68k
 //! SMPS path plays through `cpal` at 48 kHz stereo; `--mute` keeps the window silent.
 
 mod audio;
@@ -39,25 +39,46 @@ struct Options {
     mute: bool,
 }
 
+fn search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut current = Some(cwd.as_path());
+        while let Some(dir) = current {
+            roots.push(dir.to_path_buf());
+            current = dir.parent();
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut current = exe.parent();
+        while let Some(dir) = current {
+            if !roots.iter().any(|root| root == dir) {
+                roots.push(dir.to_path_buf());
+            }
+            current = dir.parent();
+        }
+    }
+    roots
+}
+
 fn default_data() -> PathBuf {
-    let mut candidates = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("campaign.bin"));
+    let roots = search_roots();
+    // Prefer the campaign archive anywhere in the tree (so double-clicking target\release boots the title/map flow),
+    // then fall back to the base archive.
+    for root in &roots {
+        for relative in ["web-data/campaign.bin", "campaign.bin"] {
+            let candidate = root.join(relative);
+            if candidate.exists() {
+                return candidate;
+            }
         }
     }
-    candidates.push(PathBuf::from("web-data/campaign.bin"));
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("sonicbros3.bin"));
+    for root in &roots {
+        let candidate = root.join("sonicbros3.bin");
+        if candidate.exists() {
+            return candidate;
         }
     }
-    candidates.push(PathBuf::from("sonicbros3.bin"));
-    candidates
-        .iter()
-        .find(|p| p.exists())
-        .cloned()
-        .unwrap_or_else(|| PathBuf::from("web-data/campaign.bin"))
+    PathBuf::from("web-data/campaign.bin")
 }
 
 fn usage() -> ! {
@@ -68,7 +89,8 @@ fn usage() -> ! {
          \x20      [--campaign-act N] [--level 1-1|1-2|1-3] [--zone 0xNN --act N] [--scale 1|2|4|8]\n\
          \x20      [--frames N --screenshot out.png] [--mute] [--list-campaign]\n\
          \n\
-         With campaign.bin and no --level/--zone, starts on the world map. --campaign-act enters one area directly.\n\
+         With campaign.bin and no --level/--zone, starts at the SMB3 title/curtain; press Enter at the menu to\n\
+         enter the World 1 map. --map skips the title. --campaign-act enters one area directly.\n\
          Default level when using sonicbros3.bin: 1-1 (zone 0x40, act 1).\n\
          Controls: arrows move, Z/X/C or Space = A/B/C, Enter = Start, P = pause, Esc = quit.\n\
          Audio: 48 kHz stereo (68k SMPS); --mute disables output."
