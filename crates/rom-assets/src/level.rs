@@ -702,12 +702,16 @@ fn apply_plc(vram: &mut [u8], lists: &[PlcList], id: usize) {
     }
 }
 
-fn load_tile_art(archive: &Archive, path: &str, tiles: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn load_tile_art(
+    archive: &Archive,
+    path: &str,
+    tiles: usize,
+) -> Result<Vec<u8>, String> {
     let (width, _, pixels) = crate::png::read_indexed(archive.read(path)?)?;
     Ok(crate::tiles::from_sheet(&pixels, width as usize, tiles))
 }
 
-fn load_sprite_file(archive: &Archive, path: &str) -> Result<SpriteData, String> {
+pub(crate) fn load_sprite_file(archive: &Archive, path: &str) -> Result<SpriteData, String> {
     let root = archive.read_json(path)?;
     let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
     let frames = root["mappings"]

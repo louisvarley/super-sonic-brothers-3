@@ -50,7 +50,18 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **reproduction** | `cargo test -p engine-core --test render_motion -- --nocapture` (not ignored). |
 | **closing fixes** | Game Over `$39` waits for PLC 3 and spawns both halves from the player check; explosions animate on their spawn tick (needed by the frozen 1-3 spindash screen); Buzz Bomber/missile, Masher, Buzzer, Coconuts, Chopper and lost-rings animation blocks were wired in; dust skid puffs spawn; EHZ's near-hills background advances once per five-line band. |
 
+## M5c front-end screens: partial parity (port gap)
+
+| | |
+|---|---|
+| **id** | K5 |
+| **state** | `frontend-map` now matches all 400 ticks / 14 framebuffer hashes. `frontend-title`, `frontend-title-map` and `frontend-match` still diverge at their first hash (tick 30). |
+| **first hashes** | `frontend-title`/`frontend-title-map`: legacy `4688767481692680038`, port `1897499236784740993` (the title screen is still the black placeholder; the SMB3 curtain/logo/menu streams, Sonic/Tails actor scripts and title line-scroll splits are not ported). `frontend-match`: legacy `16094679856854692594`, port `15085034060434167613` (bonus-room tile-memory/CHR-bank composition and text/status layout are wrong; the N-spade card phase after the 400-tick window is not ported). |
+| **reproduction** | `cargo test -p engine-core --test frontend_screens -- --ignored --nocapture`; assertion unchanged. |
+| **status** | **Open.** `NesPpu`, `NesPresenter`, `StatusBar`, `MiniSonicArt`, `SpriteKit`, `Vdp::render_screen` and the map screen are implemented; title and match still need their remaining screen code/art composition. |
+
 ## Suspected, to confirm during Phase 1/2
+
 
 | # | Area | Suspicion | How to confirm |
 |---|---|---|---|

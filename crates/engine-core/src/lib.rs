@@ -35,3 +35,4 @@ pub use object::Obj;
 pub use ram::{Ram, RAM_SIZE};
 pub use session::Session;
 pub use world::World;
+pub mod frontend;

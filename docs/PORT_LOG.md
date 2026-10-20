@@ -519,7 +519,21 @@ The SMB3 goal traces must be generated with `--zone`/`--act` rather than `--leve
 * `cargo test --workspace`: 68 engine-core unit tests, all motion tests (including the render gate), 2 golden-trace and the rom-assets tests pass.
 * `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
+## 2026-10-20 - Phase 2 M5c: SMB3 front-end screens (partial)
+
+### Implemented
+* `rom-assets::load_frontend_assets`: `sb3/prg_*.bin`, `sb3/chr_*.bin`, `bonus_room.bin`, front-end art entries, Sonic/Tails/monitor/SMB3 enemy sprite data, monitor/life icons and palette 03, all from the archive.
+* `engine-core::frontend`: `NesPpu` (mirroring, palette, Video_Upd streams), `NesPresenter` (CHR/palette to MD tiles, margins, priority), `StatusBar`, `MiniSonicArt`, `SpriteKit`, `Screen`-style palette/fade/RAM/VRAM helpers, `GameFlow`/`MapProgress`.
+* `Vdp::render_screen` with plane A/B nametables, per-line vertical scroll and sprite masking.
+* World map: SMB3 World 1 layout, animated banks, mini Sonic, status bar, world-intro box, movement/fade. **`frontend-map` matches all 400 ticks (14/14 hashes).**
+
+### Open
+* Title and title?map: first divergence at tick 30, legacy `4688767481692680038`, port `1897499236784740993`. The title screen is still a placeholder: missing the SMB3 curtain/logo/menu PPU streams, actor scripts, sprite/DPLC placement and title line scroll.
+* Match: first divergence at tick 30, legacy `16094679856854692594`, port `15085034060434167613`. Bonus-room tile/CHR-bank/palette composition is wrong; the card phase beyond the 400-tick window is not ported.
+* `cargo test --workspace` (excluding the new gate) passes; fmt/clippy clean. The new `frontend_screens` assertion is unchanged and currently fails for the three screens above.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
+
 
 Two workstreams, per the owner's decision:
 

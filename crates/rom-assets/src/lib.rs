@@ -14,4 +14,6 @@ pub mod tiles;
 pub use animation::{load_sonic_animation, load_tails_animation};
 pub use archive::Archive;
 pub use collision::load_collision_sets;
+pub use frontend::load_frontend_assets;
 pub use level::{Bounds, LevelData, ObjectPlacement, RingGroup, Start};
+pub mod frontend;

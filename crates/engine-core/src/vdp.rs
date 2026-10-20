@@ -57,7 +57,86 @@ impl Vdp {
             self.draw_nametable(vram, background, &bg, v_bg, true);
         }
         self.draw_layout(&graphics.geometry, vram, &fg, v_fg, true);
-        self.draw_sprites(vram, ram);
+        self.draw_sprites(vram, ram, false);
+    }
+
+    pub fn render_screen(
+        &mut self,
+        vram: &[u8],
+        ram: &Ram,
+        plane_a: usize,
+        plane_b: usize,
+        line_a: &dyn Fn(usize) -> Option<i32>,
+        line_b: &dyn Fn(usize) -> Option<i32>,
+    ) {
+        self.frame.fill(self.backdrop);
+        self.high_plane.fill(false);
+        let fg = |line: usize| -(ram.u16(vars::HORIZ_SCROLL_BUF + line as u16 * 4) as i16 as i32);
+        let bg =
+            |line: usize| -(ram.u16(vars::HORIZ_SCROLL_BUF + line as u16 * 4 + 2) as i16 as i32);
+        let a: Vec<u16> = (0..64 * 32)
+            .map(|i| {
+                u16::from_be_bytes([
+                    vram[(plane_a + i * 2) & 0xFFFF],
+                    vram[(plane_a + i * 2 + 1) & 0xFFFF],
+                ])
+            })
+            .collect();
+        let b: Vec<u16> = (0..64 * 32)
+            .map(|i| {
+                u16::from_be_bytes([
+                    vram[(plane_b + i * 2) & 0xFFFF],
+                    vram[(plane_b + i * 2 + 1) & 0xFFFF],
+                ])
+            })
+            .collect();
+        self.draw_screen_cells(vram, &b, &bg, line_b, false);
+        self.draw_screen_cells(vram, &a, &fg, line_a, false);
+        self.draw_screen_cells(vram, &b, &bg, line_b, true);
+        self.draw_screen_cells(vram, &a, &fg, line_a, true);
+        self.draw_sprites(vram, ram, true);
+    }
+
+    fn draw_screen_cells(
+        &mut self,
+        tiles: &[u8],
+        cells: &[u16],
+        scroll_x: &dyn Fn(usize) -> i32,
+        scroll_y: &dyn Fn(usize) -> Option<i32>,
+        high: bool,
+    ) {
+        for sy in 0..HEIGHT {
+            let Some(vy) = scroll_y(sy) else { continue };
+            let py = modulo(sy as i32 + vy, 256);
+            let sx0 = scroll_x(sy);
+            for x in 0..WIDTH {
+                let px = modulo(sx0 + x as i32, 512);
+                let pattern = cells[((py >> 3) as usize) * 64 + (px >> 3) as usize];
+                if ((pattern & 0x8000) != 0) != high {
+                    continue;
+                }
+                let tile = (pattern & 0x7FF) as usize;
+                let row = if pattern & 0x1000 != 0 {
+                    7 - (py & 7)
+                } else {
+                    py & 7
+                };
+                let col = if pattern & 0x800 != 0 {
+                    7 - (px & 7)
+                } else {
+                    px & 7
+                };
+                let b = tiles[tile * 32 + (row * 4 + col / 2) as usize];
+                let nib = if col & 1 == 0 { b >> 4 } else { b & 0x0F };
+                if nib != 0 {
+                    let i = sy * WIDTH + x;
+                    self.frame[i] = (((pattern >> 13) & 3) as u8) * 16 + nib;
+                    if high {
+                        self.high_plane[i] = true;
+                    }
+                }
+            }
+        }
     }
 
     pub fn render_black(&mut self) {
@@ -160,8 +239,9 @@ impl Vdp {
         }
     }
 
-    fn draw_sprites(&mut self, tiles: &[u8], ram: &Ram) {
+    fn draw_sprites(&mut self, tiles: &[u8], ram: &Ram, masking: bool) {
         let mut drawn = vec![false; WIDTH * HEIGHT];
+        let mut masked = [false; HEIGHT];
         let mut line_sprites = [0u16; HEIGHT];
         let mut line_pixels = [0u16; HEIGHT];
         let mut index = 0usize;
@@ -178,13 +258,17 @@ impl Vdp {
             let fy = pattern & 0x1000 != 0;
             let high = pattern & 0x8000 != 0;
             let line0 = ((pattern >> 13) & 3) as u8;
+            let mask_sprite = masking && ram.u16(e + 6) & 0x1FF == 0;
             for y in 0..h_cells * 8 {
                 let py = sy + y;
                 if !(0..HEIGHT as i32).contains(&py) {
                     continue;
                 }
                 let pyi = py as usize;
-                if line_sprites[pyi] >= 20 || line_pixels[pyi] >= 320 {
+                if mask_sprite && line_sprites[pyi] > 0 {
+                    masked[pyi] = true;
+                }
+                if masked[pyi] || line_sprites[pyi] >= 20 || line_pixels[pyi] >= 320 {
                     continue;
                 }
                 let cy = if fy { h_cells * 8 - 1 - y } else { y };
