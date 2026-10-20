@@ -532,8 +532,25 @@ The SMB3 goal traces must be generated with `--zone`/`--act` rather than `--leve
 * Match: first divergence at tick 30, legacy `16094679856854692594`, port `15085034060434167613`. Bonus-room tile/CHR-bank/palette composition is wrong; the card phase beyond the 400-tick window is not ported.
 * `cargo test --workspace` (excluding the new gate) passes; fmt/clippy clean. The new `frontend_screens` assertion is unchanged and currently fails for the three screens above.
 
-## Appendix: Phase 2 plan (approved 2026-10-19)
+## 2026-10-20 — Phase 2 M8a: playable native Rust build (verified)
 
+* New `crates/platform-native` (binary `sonic-bros-3`): `minifb` window, keyboard → Mega Drive pad, fixed 60 Hz, and
+  the ported `Session::step`/`render` output presented at 320x224 (scaled 4x). It starts directly in a reviewed level
+  (`--level 1-1/1-2/1-3`, or `--zone 0xNN --act N`); `P` pauses, `Esc` quits.
+* `--frames N --screenshot out.png` runs headlessly and writes an RGBA PNG; it also prints the tick and the same
+  low-64 SHA-256 framebuffer hash the golden traces use.
+* Release build with static CRT (`.cargo/config.toml`, `+crt-static`); `sonic-bros-3.exe` is 1.36 MB and needs only
+  `sonicbros3.bin`.
+* **Verified:** `sonic-bros-3.exe --level 1-1 --frames 30` prints
+  `hash=4f5de3aa5c2873f0` = `5718977422660498416`, exactly the legacy `smb3-1-1-playing-idle` tick-30 hash. The
+  rendered frame shows SMB3 1-1 with Sonic, Goomba, blocks, bushes and HUD.
+* Window smoke test: the process opens and stays running; `--help` and headless modes work.
+* Limitations: silent (M6 not started), no web shell, title/card screens still K5, and it reads the derived archive
+  (stock importer M7 still pending).
+
+Next: `platform-web` (WASM + canvas + ROM file picker), then audio, the stock importer and packaging.
+
+## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:
 

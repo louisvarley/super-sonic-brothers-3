@@ -31,6 +31,34 @@ legacy/             the existing Node.js + C# implementation (buildable oracle)
 docs/               inventory, port log, known issues, and the legacy design notes
 ```
 
+## Play the Rust port (native, in progress)
+
+```powershell
+cargo build --release -p sonic-bros-3
+.\target\release\sonic-bros-3.exe --level 1-1
+```
+
+The release binary is a single static-CRT `.exe` (no MSVC redistributable). It needs the derived asset archive
+`sonicbros3.bin` in the current directory, or `--data PATH`. It starts **directly in the chosen level** (the title
+card/map flow is not wired yet). Controls: arrows, **Z/X/C** or **Space** = A/B/C, **Enter** = Start, **P** = pause,
+**Esc** = quit.
+
+```powershell
+# other reviewed levels
+.\target\release\sonic-bros-3.exe --level 1-2
+.\target\release\sonic-bros-3.exe --level 1-3
+# a Sonic zone (Emerald Hill act 1, Green Hill act 1, Marble act 1)
+.\target\release\sonic-bros-3.exe --zone 00 --act 1
+.\target\release\sonic-bros-3.exe --zone 11 --act 1
+.\target\release\sonic-bros-3.exe --zone 13 --act 1
+# headless render + hash (for verification)
+.\target\release\sonic-bros-3.exe --level 1-1 --frames 30 --screenshot out.png
+```
+
+Current limitations: **audio is not ported yet** (silent), there is no web/WASM Rust shell yet, and the title/card
+screens are still the K5 gap. The native game reads the legacy derived archive for now; the stock Sonic 2 + SMB3
+importer is the remaining asset workstream.
+
 ## ROMs
 
 Put your own ROMs **outside git** (they are ignored):

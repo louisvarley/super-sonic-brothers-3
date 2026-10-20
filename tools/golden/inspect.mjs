@@ -55,7 +55,7 @@ function readEntity(b, p) {
   };
 }
 
-for (const path of process.argv.slice(2)) {
+for (const path of process.argv.slice(2).filter(a => !a.startsWith('--'))) {
   const { header, ticks, snapshots, end } = readTrace(path);
   const phases = [];
   for (const t of ticks) if (phases.at(-1)?.phase !== t.phase) phases.push({ phase: t.phase, tick: t.tick });
@@ -69,4 +69,7 @@ for (const path of process.argv.slice(2)) {
   console.log(`  zone:act seen: ${acts.join(', ')}`);
   console.log(`  sonic x ${Math.min(...xs)}..${Math.max(...xs)}  y ${Math.min(...ys)}..${Math.max(...ys)}`);
   console.log(`  rings ${ticks.at(-1).rings} score ${ticks.at(-1).score} lives ${ticks.at(-1).lives}`);
+  if (process.argv.includes('--hashes')) {
+    for (const t of ticks) if (t.screenHash !== 0n) console.log(`  hash ${t.tick} ${t.screenHash.toString()}`);
+  }
 }
