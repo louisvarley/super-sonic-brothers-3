@@ -3,8 +3,10 @@
 A behaviour-preserving port of the existing Sonic the Hedgehog 2 + Super Mario Bros. 3 hybrid engine
 (currently Node.js + C#) to Rust.
 
-> **Status:** Phase 0 (inventory) and Phase 1 (characterisation/golden traces) are in progress. The Rust game engine is
-> **not implemented yet**; `legacy/` contains the oracle. See `docs/PORT_LOG.md`.
+> **Status:** Phase 0 (inventory) and Phase 1 (characterisation/golden traces) are complete. Phase 2 is in progress:
+> `engine-core` primitives, archive/level loading, collision, player/camera and the SMB3 1-1 object set are ported and
+> verified against the legacy traces. The executable, web UI, audio, frontend and packaging are not built yet.
+> See `docs/PORT_LOG.md`.
 
 ## Rules of the port
 

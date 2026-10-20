@@ -1,8 +1,7 @@
 # Inventory (Phase 0)
 
-_Status: draft for approval. Written 2026-10-19 after reading the repo, building it, running it headless and running the
-test suite. Line-level detail was read for the files listed as "read"; others are described from the existing
-`docs/` and the module's public surface. Corrections welcome._
+_Status: Phase 0 inventory, approved. Phase 1 (golden traces) and Phase 2 M1-M4a are implemented; see
+`docs/PORT_LOG.md` for the current state._
 
 > **Path note (2026-10-19):** after this inventory was written, the legacy implementation was moved under `legacy/`.
 > Read `src/…` below as `legacy/src/…`, `tests/…` as `legacy/tests/…`, `tools/…` as `legacy/tools/…`, and `web/…` as
