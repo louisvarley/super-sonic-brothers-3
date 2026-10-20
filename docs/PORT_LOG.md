@@ -644,6 +644,31 @@ Remaining: pipe entry and a few rare object events have no dedicated Mario PCM y
 Remaining from the user's list: the Sonic item/card-game/menu conversion, 2-player Tails, and pipe enter/exit plus
 sprite clipping. These are the next batch.
 
+## 2026-10-20 - User change batch 2: Sonic items/card game, 2P Tails, pipes
+
+* **N-Spade card game ported** from `legacy/src/SonicBros3/Frontend/MatchGameScreen.cs`: the bonus-room intro,
+  `Bonus_WaitA0`, fade to black, 18-card shuffled deck, 8-frame cursor repeat, 5-frame flips, two misses,
+  persistent `Map_NSpadeInProg` deck, status bar, and the Sonic-monitor faces (mushroom = speed shoes,
+  flower = shield, star = invincibility, 1-up = Sonic, 10/20 coins = 10/20 rings).
+* **Prizes are real Sonic items**: 1-up lives, rings one per frame (100 rings = a life), and speed
+  shoes/shield/invincibility are queued in `MapProgress.PowerUps`. At the start of the next act each queued item
+  rises out of a monitor at Sonic (`Obj 0x2E` with the item's anim), exactly as the legacy `GameFlow.StartLevel` did;
+  the map status now shows the queued item icons. End-level cards already use Sonic monitor icons and the SMB3
+  three-card life rule (rings 2, shields 3, invincibility 5, mixed 1).
+* **2 PLAYER** now carries `MapProgress.TwoPlayer` from the title. Player 2 drives Tails with WASD + J/K/L (I = Start);
+  the engine uses the original `TailsCPU` takeover path, so Tails is player-controlled while P2 is active and
+  returns to CPU following when idle. The world map draws a second mini Tails beside mini Sonic in 2P mode.
+* **Pipes**: `Smb3Gameplay` is parsed into `world::Gameplay`, and `Session::StepPipe` is ported: mouth detection,
+  pipe SFX, local transit paths, exit-mouth placement, alternate/bonus/common-exit seamless area loads (rings, timer,
+  score, lives, shield/invincibility object slots, shoes and invulnerability carried), map-pipe return, and a
+  sprite clip rectangle so a player disappears into a pipe instead of drawing over its rim.
+* `--match` boots straight into the card game (with map music) for testing; `--list-campaign` is unchanged.
+* Tests: `session::tests::a_local_pipe_carries_the_players_and_returns_control`,
+  `tests/match_game.rs` (18-card deal/render), and the existing 575 golden traces still pass.
+* **Remaining K5-match**: the bonus-room framebuffer still diverges from the legacy trace at tick 30 (the room's
+  tile-memory/CHR composition); the card game itself is now ported and covered behaviourally. The ignored
+  `frontend-match` golden remains the strict oracle for a later room-art pass.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

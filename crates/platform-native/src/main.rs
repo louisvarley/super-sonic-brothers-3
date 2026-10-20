@@ -32,6 +32,7 @@ struct Options {
     world: u8,
     map_screen: usize,
     campaign_act: Option<u16>,
+    match_game: bool,
     list_campaign: bool,
     scale: Scale,
     frames: Option<u32>,
@@ -86,7 +87,7 @@ fn usage() -> ! {
         "Sonic Bros. 3 (Rust port)\n\
          \n\
          Usage: sonic-bros-3 [--data web-data/campaign.bin] [--map] [--world 1-8] [--map-screen N]\n\
-         \x20      [--campaign-act N] [--level 1-1|1-2|1-3] [--zone 0xNN --act N] [--scale 1|2|4|8]\n\
+         \x20      [--campaign-act N] [--match] [--level 1-1|1-2|1-3] [--zone 0xNN --act N] [--scale 1|2|4|8]\n\
          \x20      [--frames N --screenshot out.png] [--mute] [--list-campaign]\n\
          \n\
          With campaign.bin and no --level/--zone, starts at the SMB3 title/curtain; press Enter at the menu to\n\
@@ -107,6 +108,7 @@ fn parse_args() -> Options {
     let mut world = 1u8;
     let mut map_screen = 0usize;
     let mut campaign_act = None;
+    let mut match_game = false;
     let mut list_campaign = false;
     let mut scale = Scale::X4;
     let mut frames = None;
@@ -173,6 +175,7 @@ fn parse_args() -> Options {
                         .unwrap_or_else(|| usage()),
                 );
             }
+            "--match" => match_game = true,
             "--list-campaign" => list_campaign = true,
             "--scale" => {
                 i += 1;
@@ -217,6 +220,7 @@ fn parse_args() -> Options {
         world,
         map_screen,
         campaign_act,
+        match_game,
         list_campaign,
         scale,
         frames,
@@ -232,10 +236,16 @@ enum Running {
 
 impl Running {
     fn step(&mut self, buttons: u8) -> Result<(), String> {
+        self.step_p2(buttons, 0)
+    }
+
+    fn step_p2(&mut self, buttons: u8, buttons_p2: u8) -> Result<(), String> {
         match self {
-            Running::Direct(s) => s.step(buttons).map_err(|e| e.to_string()),
+            Running::Direct(s) => s
+                .step_with_p2(buttons, buttons_p2)
+                .map_err(|e| e.to_string()),
             Running::Campaign(c) => {
-                c.step(buttons);
+                c.step_p2(buttons, buttons_p2);
                 match c.last_error.take() {
                     Some(e) => Err(e),
                     None => Ok(()),
@@ -335,8 +345,8 @@ fn main() {
     };
 
     let has_campaign = archive.exists("campaign/campaign.json");
-    let campaign_mode =
-        has_campaign && (opts.campaign_act.is_some() || opts.map || !opts.level_explicit);
+    let campaign_mode = has_campaign
+        && (opts.campaign_act.is_some() || opts.map || opts.match_game || !opts.level_explicit);
     let mut running = if campaign_mode {
         let assets = match load_frontend_assets(&archive) {
             Ok(a) => a,
@@ -356,7 +366,9 @@ fn main() {
             Some(area) if area.world != 0 => (area.world, area.screen as usize),
             _ => (opts.world, opts.map_screen),
         };
-        let start = if opts.campaign_act.is_some() || opts.map {
+        let start = if opts.match_game {
+            Start::Match
+        } else if opts.campaign_act.is_some() || opts.map {
             Start::Map
         } else {
             Start::Title
@@ -465,7 +477,8 @@ fn main() {
 
         if !paused {
             let buttons = read_buttons(&window);
-            if let Err(e) = running.step(buttons) {
+            let buttons_p2 = read_buttons_p2(&window);
+            if let Err(e) = running.step_p2(buttons, buttons_p2) {
                 if !reported_error {
                     eprintln!("session stopped: {e}");
                     reported_error = true;
@@ -567,6 +580,36 @@ fn read_buttons(window: &Window) -> u8 {
     }
     if window.is_key_down(Key::Enter) {
         b |= 0x80; // Start
+    }
+    b
+}
+
+/// Tails' pad for the title's 2 PLAYER mode: WASD, J = B, K = C, L = A, I = Start.
+fn read_buttons_p2(window: &Window) -> u8 {
+    let mut b = 0u8;
+    if window.is_key_down(Key::W) {
+        b |= 0x01;
+    }
+    if window.is_key_down(Key::S) {
+        b |= 0x02;
+    }
+    if window.is_key_down(Key::A) {
+        b |= 0x04;
+    }
+    if window.is_key_down(Key::D) {
+        b |= 0x08;
+    }
+    if window.is_key_down(Key::J) {
+        b |= 0x10;
+    }
+    if window.is_key_down(Key::K) {
+        b |= 0x20;
+    }
+    if window.is_key_down(Key::L) {
+        b |= 0x40;
+    }
+    if window.is_key_down(Key::I) {
+        b |= 0x80;
     }
     b
 }

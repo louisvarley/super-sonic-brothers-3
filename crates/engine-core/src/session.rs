@@ -19,7 +19,7 @@ use crate::player::Unported;
 use crate::plc::PlcQueue;
 use crate::rings::sync_animations;
 use crate::vdp::Vdp;
-use crate::world::{LevelSource, World};
+use crate::world::{Gameplay, GameplayPipe, LevelSource, World};
 use crate::{vars, Obj, Ram};
 
 pub struct Session {
@@ -52,6 +52,30 @@ pub struct Session {
     pub exit_on_restart: bool,
     pub exited: bool,
     pub goal_card: Option<i32>,
+    gameplay: Option<Gameplay>,
+    pipe: Option<PipeTravel>,
+    pipe_exit_direction: i32,
+    pipe_frames: i32,
+    pipe_cooldown: i32,
+    pipe_exit: Option<PipeExit>,
+    pipe_origin: (i32, i32),
+    sprite_clip: Option<(i32, i32, i32, i32)>,
+}
+
+#[derive(Clone, Debug)]
+struct PipeTravel {
+    pipe: GameplayPipe,
+}
+
+/// A pipe that leaves this act, for the campaign host to resolve.
+#[derive(Clone, Debug)]
+pub struct PipeExit {
+    pub kind: String,
+    pub target_x: i32,
+    pub target_y: i32,
+    pub exit_direction: i32,
+    /// A map pipe through the far end of a pipeway.
+    pub far: bool,
 }
 
 impl Session {
@@ -85,6 +109,7 @@ impl Session {
         tails_animation: TailsAnimation,
         debug_start: Option<crate::world::Start>,
     ) -> Result<Self, Unported> {
+        let gameplay = level.gameplay();
         let world = World::new_at(level.as_ref(), zone, act, None, debug_start)?;
         let graphics = level.graphics();
         let mut world = world;
@@ -153,6 +178,14 @@ impl Session {
             exit_on_restart: false,
             exited: false,
             goal_card: None,
+            gameplay,
+            pipe: None,
+            pipe_exit_direction: 0,
+            pipe_frames: 0,
+            pipe_cooldown: 0,
+            pipe_exit: None,
+            pipe_origin: (0, 0),
+            sprite_clip: None,
         })
     }
 
@@ -170,6 +203,19 @@ impl Session {
         self.goal_card
     }
 
+    /// Takes a pipe exit that needs the campaign host to load another area or return to the map.
+    pub fn take_pipe_exit(&mut self) -> Option<PipeExit> {
+        self.pipe_exit.take()
+    }
+
+    /// Starts a seamlessly loaded act at the pipe mouth, walking out in `direction`.
+    pub fn set_pipe_exit_direction(&mut self, direction: i32) {
+        self.pipe = None;
+        self.pipe_exit_direction = direction;
+        self.pipe_frames = 0;
+        self.pipe_cooldown = 0;
+    }
+
     /// The act the session is playing (`act` is 1-based, as `LevelSession.CurrentAct`).
     pub fn current_act(&self) -> (u8, u8) {
         (self.zone, self.act)
@@ -177,13 +223,31 @@ impl Session {
 
     /// One frame. `buttons` is the held Mega Drive pad byte (Up 0, Down 1, Left 2, Right 3, B 4, C 5, A 6, Start 7).
     pub fn step(&mut self, buttons: u8) -> Result<(), Unported> {
+        self.step_with_p2(buttons, 0)
+    }
+
+    /// One frame with player 2's pad (Tails). Player 2 drives Tails through the original CPU-takeover path.
+    pub fn step_with_p2(&mut self, buttons: u8, buttons_p2: u8) -> Result<(), Unported> {
         // LevelSession.StepPlaying: once an unported exception has stopped the session, every later frame is a
         // no-op and the trace keeps recording the frozen state.
         if self.stopped.is_some() || self.exited {
             self.ticks += 1;
             return Ok(());
         }
-        let result = self.step_frame(buttons);
+        self.sprite_clip = None;
+        match self.step_pipe(buttons) {
+            Ok(true) => {
+                self.ticks += 1;
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(e) => {
+                self.stopped = Some(e);
+                self.ticks += 1;
+                return Ok(());
+            }
+        }
+        let result = self.step_frame(buttons, buttons_p2);
         if let Err(e) = result {
             self.stopped = Some(e);
         }
@@ -191,10 +255,251 @@ impl Session {
         Ok(())
     }
 
-    fn step_frame(&mut self, buttons: u8) -> Result<(), Unported> {
+    /// `LevelSession.StepPipe`: entry, the local transit path, exit mouths and campaign pipe exits.
+    fn step_pipe(&mut self, buttons: u8) -> Result<bool, Unported> {
+        if self.pipe_cooldown > 0 {
+            self.pipe_cooldown -= 1;
+        }
+        if self.pipe.is_none() && self.pipe_exit_direction == 0 {
+            if self.pipe_cooldown != 0 {
+                return Ok(false);
+            }
+            let sonic = Obj::new(vars::MAIN_CHARACTER);
+            if sonic.routine(&self.world.ram) != crate::player::routine::CONTROL {
+                return Ok(false);
+            }
+            let found = {
+                let Some(gameplay) = self.gameplay.as_ref() else {
+                    return Ok(false);
+                };
+                gameplay
+                    .pipes
+                    .iter()
+                    .find(|p| {
+                        if (buttons as i32 & p.direction) == 0 {
+                            return false;
+                        }
+                        let x = sonic.x(&self.world.ram) as i32;
+                        let y = sonic.y(&self.world.ram) as i32;
+                        let xr = sonic.x_radius(&self.world.ram) as i32;
+                        let yr = sonic.y_radius(&self.world.ram) as i32;
+                        match p.direction {
+                            1 | 2 => {
+                                let edge = y + if p.direction == 2 { yr } else { -yr };
+                                (x - p.x).abs() <= 8 && (edge - p.y).abs() <= 6
+                            }
+                            _ => {
+                                let edge = x + if p.direction == 8 { xr } else { -xr };
+                                (y - p.y).abs() <= 12 && (edge - p.x).abs() <= 6
+                            }
+                        }
+                    })
+                    .cloned()
+            };
+            let Some(pipe) = found else {
+                return Ok(false);
+            };
+            self.pipe = Some(PipeTravel { pipe: pipe.clone() });
+            self.pipe_frames = 0;
+            self.pipe_origin = (pipe.x, pipe.y);
+            if pipe.direction == 1 || pipe.direction == 2 {
+                sonic.set_x(&mut self.world.ram, pipe.x as u16);
+            } else {
+                sonic.set_y(&mut self.world.ram, pipe.y as u16);
+            }
+            let tails = Obj::new(vars::SIDEKICK);
+            let sx = sonic.x(&self.world.ram);
+            let sy = sonic.y(&self.world.ram);
+            tails.set_x(&mut self.world.ram, sx);
+            tails.set_y(&mut self.world.ram, sy);
+            self.play_effect("pipe");
+        }
+
+        let travel = self.pipe.take();
+        let direction = if self.pipe_exit_direction != 0 {
+            self.pipe_exit_direction
+        } else if let Some(t) = travel.as_ref() {
+            t.pipe.direction
+        } else {
+            0
+        };
+        if let Some(t) = travel.as_ref() {
+            if t.pipe.kind == "local" && self.pipe_frames >= 32 {
+                let path = &t.pipe.path;
+                if path.len() >= 2 {
+                    let distance = self.pipe_frames - 32;
+                    let index = ((distance / 8) as usize).min(path.len() - 2);
+                    let fraction = (distance - index as i32 * 8).min(8);
+                    let from = path[index];
+                    let to = path[index + 1];
+                    for p in [Obj::new(vars::MAIN_CHARACTER), Obj::new(vars::SIDEKICK)] {
+                        let x = if (to[0] - from[0]).abs() > 16 {
+                            to[0]
+                        } else {
+                            from[0] + (to[0] - from[0]) * fraction / 8
+                        };
+                        let y = from[1] + (to[1] - from[1]) * fraction / 8;
+                        p.set_x(&mut self.world.ram, x as u16);
+                        p.set_y(&mut self.world.ram, y as u16);
+                    }
+                }
+            }
+        }
+        if self.pipe_exit_direction != 0 && self.pipe_frames == 0 {
+            if let Some(gameplay) = self.gameplay.as_ref() {
+                let sonic = Obj::new(vars::MAIN_CHARACTER);
+                let opposite = match direction {
+                    1 => 2,
+                    2 => 1,
+                    4 => 8,
+                    _ => 4,
+                };
+                let mouth = gameplay
+                    .pipes
+                    .iter()
+                    .filter(|p| p.direction == opposite)
+                    .min_by_key(|p| {
+                        (p.x - sonic.x(&self.world.ram) as i32).abs()
+                            + (p.y - sonic.y(&self.world.ram) as i32).abs()
+                    });
+                if let Some(mouth) = mouth {
+                    let distance = (mouth.x - sonic.x(&self.world.ram) as i32).abs()
+                        + (mouth.y - sonic.y(&self.world.ram) as i32).abs();
+                    if distance < 96 {
+                        self.pipe_origin = (mouth.x, mouth.y);
+                        for p in [Obj::new(vars::MAIN_CHARACTER), Obj::new(vars::SIDEKICK)] {
+                            let x = mouth.x
+                                + match direction {
+                                    8 => -9,
+                                    4 => 9,
+                                    _ => 0,
+                                };
+                            let y = mouth.y
+                                + match direction {
+                                    2 => -19,
+                                    1 => 19,
+                                    _ => 0,
+                                };
+                            p.set_x(&mut self.world.ram, x as u16);
+                            p.set_y(&mut self.world.ram, y as u16);
+                        }
+                    }
+                }
+            }
+        }
+        for p in [Obj::new(vars::MAIN_CHARACTER), Obj::new(vars::SIDEKICK)] {
+            p.set_obj_control(&mut self.world.ram, 0x81);
+            p.set_x_vel(&mut self.world.ram, 0);
+            p.set_y_vel(&mut self.world.ram, 0);
+            p.set_inertia(&mut self.world.ram, 0);
+            p.set_anim(&mut self.world.ram, crate::player::anim::WALK);
+            p.set_rolling(&mut self.world.ram, false);
+            p.set_roll_jumping(&mut self.world.ram, false);
+            p.set_y_radius(
+                &mut self.world.ram,
+                if p.address() == vars::MAIN_CHARACTER {
+                    19
+                } else {
+                    15
+                },
+            );
+            p.set_priority(&mut self.world.ram, 4);
+            let x = p.x(&self.world.ram).wrapping_add(if direction == 8 {
+                1
+            } else if direction == 4 {
+                u16::MAX
+            } else {
+                0
+            });
+            let y = p.y(&self.world.ram).wrapping_add(if direction == 2 {
+                1
+            } else if direction == 1 {
+                u16::MAX
+            } else {
+                0
+            });
+            p.set_x(&mut self.world.ram, x);
+            p.set_y(&mut self.world.ram, y);
+        }
+        self.step_frame(0, 0)?;
+        self.pipe_frames += 1;
+        self.update_pipe_clip(direction);
+        let duration = if self.pipe_exit_direction != 0 {
+            48
+        } else if let Some(t) = travel.as_ref() {
+            if t.pipe.kind == "local" {
+                33 + (t.pipe.path.len().saturating_sub(1) as i32) * 8
+            } else {
+                32
+            }
+        } else {
+            32
+        };
+        if self.pipe_frames < duration {
+            self.pipe = travel;
+            return Ok(true);
+        }
+        if self.pipe_exit_direction != 0 {
+            self.pipe_exit_direction = 0;
+            self.pipe_cooldown = 24;
+            self.sprite_clip = None;
+            for p in [Obj::new(vars::MAIN_CHARACTER), Obj::new(vars::SIDEKICK)] {
+                p.set_obj_control(&mut self.world.ram, 0);
+                p.set_priority(&mut self.world.ram, 2);
+            }
+            return Ok(true);
+        }
+        let Some(entry) = travel else {
+            return Ok(true);
+        };
+        self.pipe = None;
+        if entry.pipe.kind == "local" {
+            self.pipe_exit_direction = entry.pipe.exit_direction;
+            self.pipe_frames = 0;
+            self.play_effect("pipe");
+            return Ok(true);
+        }
+        let start_x = self.level.start().x;
+        let far = entry.pipe.kind == "map"
+            && self
+                .gameplay
+                .as_ref()
+                .map(|g| g.map_pipeway)
+                .unwrap_or(false)
+            && (entry.pipe.x - start_x).abs() > 48;
+        self.pipe_exit = Some(PipeExit {
+            kind: entry.pipe.kind.clone(),
+            target_x: entry.pipe.target_x,
+            target_y: entry.pipe.target_y,
+            exit_direction: entry.pipe.exit_direction,
+            far,
+        });
+        self.pipe_frames = 0;
+        self.sprite_clip = None;
+        self.exited = true;
+        Ok(true)
+    }
+
+    fn update_pipe_clip(&mut self, direction: i32) {
+        let (x, y) = self.pipe_origin;
+        self.sprite_clip = Some(match direction {
+            1 => (0, 0, crate::vdp::WIDTH as i32, y),
+            2 => (0, y, crate::vdp::WIDTH as i32, crate::vdp::HEIGHT as i32),
+            4 => (0, 0, x, crate::vdp::HEIGHT as i32),
+            8 => (x, 0, crate::vdp::WIDTH as i32, crate::vdp::HEIGHT as i32),
+            _ => (0, 0, 0, 0),
+        });
+    }
+
+    fn step_frame(&mut self, buttons: u8, buttons_p2: u8) -> Result<(), Unported> {
         let previous = self.world.ram.u8(vars::CTRL1_HELD);
         self.world.ram.w8(vars::CTRL1_HELD, buttons);
         self.world.ram.w8(vars::CTRL1_PRESS, buttons & !previous);
+        let previous2 = self.world.ram.u8(vars::CTRL2_HELD);
+        self.world.ram.w8(vars::CTRL2_HELD, buttons_p2);
+        self.world
+            .ram
+            .w8(vars::CTRL2_PRESS, buttons_p2 & !previous2);
         let counter = self.world.ram.u16(vars::LEVEL_FRAME_COUNTER);
         self.world
             .ram
@@ -527,6 +832,7 @@ impl Session {
             self.vdp.split_line = -1;
             self.vdp.cram_below = self.vdp.cram;
         }
+        self.vdp.sprite_clip = self.sprite_clip;
         self.vdp.render_level(
             &self.graphics,
             &self.vram,
@@ -655,5 +961,69 @@ mod tests {
         }
         assert_eq!(s.world.ram.u32(vars::TIMER), 0x0100); // second 1, frame 0
         assert_eq!(s.world.ram.u32(vars::VINT_RUNCOUNT), 60);
+    }
+
+    struct PipeFixture;
+
+    impl LevelSource for PipeFixture {
+        fn fill_level_ram(&self, ram: &mut Ram, zone: u8, act: u8) {
+            Fixture.fill_level_ram(ram, zone, act);
+        }
+        fn bounds(&self) -> Bounds {
+            Fixture.bounds()
+        }
+        fn start(&self) -> Start {
+            Start { x: 480, y: 93 }
+        }
+        fn gameplay(&self) -> Option<Gameplay> {
+            Some(Gameplay {
+                pipes: vec![GameplayPipe {
+                    x: 480,
+                    y: 112,
+                    direction: 2,
+                    kind: "local".into(),
+                    target_x: 480,
+                    target_y: 304,
+                    exit_direction: 2,
+                    path: vec![[480, 112], [480, 160], [480, 208], [480, 304]],
+                }],
+                initial_exit_direction: 0,
+                map_pipeway: false,
+            })
+        }
+    }
+
+    #[test]
+    fn a_local_pipe_carries_the_players_and_returns_control() {
+        let sets = CollisionSets {
+            normal: flat("normal"),
+            alternate: flat("alternate"),
+        };
+        let mut s = Session::new(
+            Box::new(PipeFixture),
+            0x40,
+            1,
+            sets,
+            SonicAnimation::default(),
+            TailsAnimation::default(),
+        )
+        .expect("world setup");
+        for _ in 0..3 {
+            s.step(0).expect("settle");
+        }
+        assert_eq!(s.world.sonic.obj.routine(&s.world.ram), routine::CONTROL);
+        s.world.sonic.obj.set_x(&mut s.world.ram, 480);
+        s.world.sonic.obj.set_y(&mut s.world.ram, 93);
+        s.step(0x02).expect("pipe entry");
+        assert!(s.pipe.is_some(), "the down input enters the pipe");
+        for _ in 0..80 {
+            s.step(0x02).expect("pipe transit");
+        }
+        assert_eq!(s.pipe_exit_direction, 2, "the local pipe exits downward");
+        for _ in 0..50 {
+            s.step(0).expect("pipe exit");
+        }
+        assert_eq!(s.pipe_exit_direction, 0);
+        assert_eq!(s.world.sonic.obj.obj_control(&s.world.ram), 0);
     }
 }

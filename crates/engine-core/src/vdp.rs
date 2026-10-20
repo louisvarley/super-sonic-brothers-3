@@ -14,6 +14,8 @@ pub struct Vdp {
     pub cram_below: [u16; 64],
     pub split_line: i32,
     pub backdrop: u8,
+    /// Sprite-only clip rectangle (x0, y0, x1, y1), used while a player is in a pipe.
+    pub sprite_clip: Option<(i32, i32, i32, i32)>,
 }
 
 impl Default for Vdp {
@@ -31,6 +33,7 @@ impl Vdp {
             cram_below: [0; 64],
             split_line: -1,
             backdrop: 0x20,
+            sprite_clip: None,
         }
     }
 
@@ -71,6 +74,7 @@ impl Vdp {
     ) {
         self.frame.fill(self.backdrop);
         self.high_plane.fill(false);
+        self.sprite_clip = None;
         let fg = |line: usize| -(ram.u16(vars::HORIZ_SCROLL_BUF + line as u16 * 4) as i16 as i32);
         let bg =
             |line: usize| -(ram.u16(vars::HORIZ_SCROLL_BUF + line as u16 * 4 + 2) as i16 as i32);
@@ -279,6 +283,11 @@ impl Vdp {
                     }
                     if !(0..WIDTH as i32).contains(&px) {
                         continue;
+                    }
+                    if let Some((x0, y0, x1, y1)) = self.sprite_clip {
+                        if px < x0 || px >= x1 || py < y0 || py >= y1 {
+                            continue;
+                        }
                     }
                     let cx = if fx { w_cells * 8 - 1 - x } else { x };
                     let tile = (pattern & 0x7FF) as i32 + (cx >> 3) * h_cells + (cy >> 3);

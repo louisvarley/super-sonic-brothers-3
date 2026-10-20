@@ -946,6 +946,11 @@ impl TitleScreen {
         self.action.take()
     }
 
+    /// 0 for 1 PLAYER, 1 for 2 PLAYER (Tails is player 2).
+    pub fn players(&self) -> usize {
+        self.player
+    }
+
     fn present(&mut self) {
         let first = (((8 + self.vert_scroll) % 480) >> 3) as usize;
         let margin = |c: i32| Some(c.rem_euclid(32) as usize);

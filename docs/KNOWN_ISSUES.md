@@ -50,14 +50,15 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **reproduction** | `cargo test -p engine-core --test render_motion -- --nocapture` (not ignored). |
 | **closing fixes** | Game Over `$39` waits for PLC 3 and spawns both halves from the player check; explosions animate on their spawn tick (needed by the frozen 1-3 spindash screen); Buzz Bomber/missile, Masher, Buzzer, Coconuts, Chopper and lost-rings animation blocks were wired in; dust skid puffs spawn; EHZ's near-hills background advances once per five-line band. |
 
-## M5c front-end screens: title and map exact, card game pending (K5-match)
+## M5c front-end screens: title and map exact, card game ported (room art still differs)
 
 | | |
 |---|---|
 | **id** | K5 |
 | **state** | **Title, title?map and map are exact.** `frontend-title` matches all 600 ticks, `frontend-title-map` all 700 ticks, and `frontend-map` all 400 ticks, including every 30-tick framebuffer hash. `Sb3TitleScreen` ports the curtain, logo streams, drop/shake, glow, palette fades, 1P/2P menu, skip/timeout, Sonic/Tails/Goomba/Koopa actor scripts and title line scroll. |
-| **remaining** | `frontend-match` is still the placeholder and diverges at tick 30 (legacy `16094679856854692594`, port `15085034060434167613`). Bonus-room tile-memory/CHR-bank composition, text/status layout and the N-spade card phase are not ported. |
-| **reproduction** | `cargo test -p engine-core --test frontend_screens -- --nocapture` (strict title/title-map/map); `cargo test -p engine-core --test frontend_screens -- --ignored --nocapture` (K5-match). |
+| **card game** | The N-Spade game is ported from `MatchGameScreen.cs`: bonus room, intro text/wait, fade, 18-card shuffled deck, cursor/flip/mismatch states, persistent deck, Sonic-monitor faces and rewards (lives, rings, speed shoes/shield/invincibility). `tests/match_game.rs` covers the deal; prizes spawn as monitors at the next act. |
+| **remaining** | The bonus-room framebuffer still diverges from the legacy `frontend-match` trace at tick 30 (legacy `16094679856854692594`, port `15085034060434167613`), so that strict golden stays ignored. The card logic is covered behaviourally instead. |
+| **reproduction** | `cargo test -p engine-core --test frontend_screens -- --nocapture` (strict title/title-map/map); `cargo test -p engine-core --test match_game -- --nocapture`; `cargo test -p engine-core --test frontend_screens -- --ignored --nocapture` (K5-match). |
 
 ## M6a 68k audio: exact against the legacy oracle (closed for SMB3 levels)
 
@@ -77,7 +78,7 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **id** | K6b |
 | **state** | Sonic events use the existing 68k SFX queue; SMB3 events use generated PCMs rendered from the source sound engine. The PCM player overlaps effects and mixes after the SMPS mixer. |
 | **mapping** | bump/kick/pipe/fire = QPlayer 02/08/10/20; coin/powerup/1up = QLevel1 01/20/40; crumble/boomerang = QLevel2 01/04; map-world/move/enter = QMap 01/02/04; course-clear/death = QMusic1 20/01. Sonic jump/ring/hurt/skid/roll/spindash/spring/spikes/monitor/shield/starpost use their existing Sonic IDs. |
-| **open** | Pipe entry and a few rare object events have no dedicated Mario PCM yet. Title/map Z80 music is still unported. |
+| **open** | A few rare object events have no dedicated Mario PCM yet. Title/map Z80 music is still unported. Pipe entry/exit uses `pipe.pcm`. |
 
 ## M7 campaign: metadata, all-world maps and area loading (closed for loading; gameplay partial)
 
@@ -87,7 +88,7 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **state** | **Campaign structure and map rendering complete.** `rom-assets::CampaignData` reads `campaign/campaign.json` (8 worlds, 19 screens, 257 areas: 255 available, 1 `failed`, 1 `blocked`) and exposes world/screen ownership, source metadata, widths/heights and alternate ids. `LevelData::load_dir` loads `zones/area_*/act_1`; all 255 available areas load and step 60 ticks without panic. `MapScreen`/`GameFlow` use each world's map cells, palette, entries, paths, panels, cards, intro box and status bar; World 1 remains byte-identical with or without campaign metadata, and `frontend-map` stays exact. Native campaign mode loads map panels, starts the area's `Session`, returns to the map on death/goal, carries lives/score/rings/cards, and plays map/area 68k music. |
 | **verification** | `campaign_metadata`: counts and ownership. `campaign_areas`: 255/255 available areas loaded and stepped. `campaign_maps`: all 19 screens render non-empty. `campaign_map_enter`: World 1 movement reaches the 1-1 panel. `campaign_world1_map`: World 1 hashes match the base archive for 400 ticks. Native unit tests cover map music and death returning to the map. |
 | **reproduction** | `cargo test -p rom-assets --test campaign_metadata -- --nocapture`; `cargo test -p engine-core --test campaign_areas --test campaign_maps --test campaign_map_enter --test campaign_world1_map -- --nocapture`; `cargo test -p sonic-bros-3 -- --nocapture`; `sonic-bros-3 --data web-data/campaign.bin --list-campaign`. |
-| **open** | Source map commands, world transitions, locks, bridges, wandering enemies and world-clear boss events are not ported (the manifest's own blockers). The failed area is `ts01-15-A4F9-C166` (`opcode $00 at $CFD7 not emulated`); the blocked area is `ts08-18-B481-CE4B` (vertical 180 rows, current layout supports 128; no native goal/event adapter). Some `native-partial` areas still lack native actor behaviors and goal adapters. Map pipe travel, the N-spade card game and the title/title-map screens remain K5/partial. Game over currently starts a fresh World 1 map rather than the still-placeholder title. Campaign acts 256/257 load their correct directories but the legacy byte act field in Session reports 1. |
+| **open** | Source map commands, world transitions, locks, bridges, wandering enemies and world-clear boss events are not ported (the manifest's own blockers). The failed area is `ts01-15-A4F9-C166` (`opcode $00 at $CFD7 not emulated`); the blocked area is `ts08-18-B481-CE4B` (vertical 180 rows, current layout supports 128; no native goal/event adapter). Some `native-partial` areas still lack native actor behaviors and goal adapters. Pipe entry/exit, local transit, alternate/bonus/common exits and the N-spade card game are now ported; map-pipe far-end placement (the paired pipeway destination) is still simplified to returning at the current tile. The title/title-map screens are exact; the card game's room art is K5-partial. Game over currently starts a fresh World 1 map rather than the title. Campaign acts 256/257 load their correct directories but the legacy byte act field in Session reports 1. |
 
 ## Suspected, to confirm during Phase 1/2
 
@@ -95,7 +96,7 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | # | Area | Suspicion | How to confirm |
 |---|---|---|---|
 | S1 | `Smb3ObjectConverter.Rules` / `campaign/backlog.json` | Campaign areas report missing enemy behaviours; unported ids despawn via `MarkObjGone`, so "some levels have no enemies". This is the documented `native-partial` state, not a crash. | Load a `native-partial` area and compare its object list to `unmappedObjects`. |
-| S2 | `Runtime/LevelSession.cs` `StepPipe` | Pipe entry uses fixed pixel windows (`<=8`/`<=6`/`<=12`) and hard-coded durations; the brief calls pipes "buggy". Behaviour must be ported exactly. | Input scripts entering/exiting every pipe mouth in 1-1/1-2/1-3. |
+| S2 | `Runtime/LevelSession.cs` `StepPipe` | Pipe entry uses fixed pixel windows (`<=8`/`<=6`/`<=12`) and hard-coded durations; the brief calls pipes "buggy". Behaviour must be ported exactly. **Ported** (entry, local transit, exit, alternate/bonus/common loads, map returns, sprite clip); map-pipe far-end placement remains simplified. | Input scripts entering/exiting every pipe mouth in 1-1/1-2/1-3. |
 | S3 | `extracted/*` vs C# `Extractor` quirks | The extractor has documented "kept quirks" (e.g. unstable ring sort, sign-extended offsets). Any mis-port changes behaviour; reproduce the *effective* behaviour. | Compare Rust extraction output byte-for-byte against `sonicbros3.bin`. |
 
 ## Non-game issues (not behaviour; for awareness)

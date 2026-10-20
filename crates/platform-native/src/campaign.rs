@@ -6,7 +6,8 @@ use engine_core::collision::CollisionSets;
 use engine_core::frontend::{
     Card, FrontendAssets, GameFlow, MapAction, MapProgress, ScreenState, Start, SPADE_TILE,
 };
-use engine_core::session::Session;
+use engine_core::session::{PipeExit, Session};
+use engine_core::world::Start as LevelStart;
 use engine_core::{vars, Ram};
 use rom_assets::{
     load_audio_assets_for_area, load_audio_assets_for_zone, load_audio_assets_with_song, Archive,
@@ -39,6 +40,7 @@ pub struct CampaignRunner {
     map_ram: Ram,
     map_music: u16,
     entry: Option<EntryTransition>,
+    current_act: Option<u16>,
     pub ticks: u32,
     pub last_error: Option<String>,
 }
@@ -95,10 +97,11 @@ impl CampaignRunner {
             map_ram: Ram::new(),
             map_music: 0x94,
             entry: None,
+            current_act: None,
             ticks: 0,
             last_error: None,
         };
-        if matches!(start, Start::Map) {
+        if matches!(start, Start::Map | Start::Match) {
             runner.start_map_audio(world);
         }
         Ok(runner)
@@ -134,13 +137,25 @@ impl CampaignRunner {
         self.map_audio = Some(audio);
     }
 
-    fn seed_progress(&self, session: &mut Session) {
+    fn seed_progress(&mut self, session: &mut Session) {
         let p = &self.flow.progress;
         let ram = &mut session.world.ram;
         ram.w8(vars::LIFE_COUNT, p.lives.clamp(1, 99) as u8);
         ram.w32(vars::SCORE, (p.score / 10).max(0) as u32);
         ram.w8(vars::UPDATE_HUD_LIVES, 1);
         ram.w8(vars::UPDATE_HUD_SCORE, 1);
+        // Card-game prizes: each Sonic monitor item rises at Sonic as the act starts, as the legacy GameFlow did.
+        let items = p.power_ups.clone();
+        for item in items {
+            if let Some(slot) = engine_core::objects::find_free_slot(ram) {
+                slot.set_id(ram, 0x2E);
+                slot.set_x(ram, session.world.sonic.obj.x(ram));
+                slot.set_y(ram, session.world.sonic.obj.y(ram).wrapping_sub(0x18));
+                slot.set_anim(ram, item as u8);
+                slot.set_word(ram, 0x3E, vars::MAIN_CHARACTER);
+            }
+        }
+        self.flow.progress.power_ups.clear();
     }
 
     fn start_area(&mut self, act: u16) -> Result<(), String> {
@@ -168,6 +183,7 @@ impl CampaignRunner {
         }
         self.map_audio = None;
         self.session = Some(session);
+        self.current_act = Some(act);
         self.last_error = None;
         Ok(())
     }
@@ -191,12 +207,163 @@ impl CampaignRunner {
         }
         self.map_audio = None;
         self.session = Some(session);
+        self.current_act = None;
+        self.last_error = None;
+        Ok(())
+    }
+
+    fn handle_pipe_exit(&mut self, exit: PipeExit) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        let mut p = self.flow.progress.clone();
+        p.lives = session.world.ram.u8(vars::LIFE_COUNT) as i32;
+        p.score = ((session.world.ram.u32(vars::SCORE) as i64) * 10).min(9_999_990) as i32;
+        if exit.kind == "map" {
+            p.rings = (p.rings + session.world.ram.u16(vars::RING_COUNT) as i32).min(99);
+            self.flow.set_progress_map(p, false);
+            self.start_map_audio(self.flow.progress.world as u8);
+            return;
+        }
+        let Some(current_act) = self.current_act else {
+            return;
+        };
+        let Some(source) = self.campaign.area_for_act(current_act).cloned() else {
+            return;
+        };
+        let Some(target) = self.pipe_target(&exit.kind, &source) else {
+            self.last_error = Some(format!(
+                "pipe exit from {} ({}) has no destination",
+                source.source.id, exit.kind
+            ));
+            return;
+        };
+        let previous = session.world.ram.clone();
+        if let Err(e) = self.start_area_seamless(
+            target.act,
+            exit.target_x,
+            exit.target_y,
+            exit.exit_direction,
+            &previous,
+        ) {
+            self.last_error = Some(e);
+        }
+    }
+
+    fn pipe_target(
+        &self,
+        kind: &str,
+        source: &rom_assets::CampaignArea,
+    ) -> Option<rom_assets::CampaignArea> {
+        let world = self.flow.progress.world.clamp(1, 8) as usize;
+        let id = match kind {
+            "common-exit" => {
+                if world == 4 {
+                    "ts01-15-BDB8-C560".to_string()
+                } else {
+                    "ts01-15-BD68-C560".to_string()
+                }
+            }
+            "bonus" => {
+                const BONUS_LAYOUTS: [u16; 8] = [
+                    0xB1AF, 0xB1BC, 0xB28B, 0xB372, 0xB3D8, 0xB470, 0xB5E2, 0xB65B,
+                ];
+                let address = BONUS_LAYOUTS[world - 1];
+                self.campaign
+                    .areas
+                    .iter()
+                    .find(|a| a.source.layout_address == address && a.source.tileset == 14)
+                    .map(|a| a.source.id.clone())?
+            }
+            _ => source.alternate_area_id.clone()?,
+        };
+        self.campaign
+            .areas
+            .iter()
+            .find(|a| a.source.id == id && a.available())
+            .cloned()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_area_seamless(
+        &mut self,
+        act: u16,
+        x: i32,
+        y: i32,
+        exit_direction: i32,
+        previous: &Ram,
+    ) -> Result<(), String> {
+        let area = self
+            .campaign
+            .area_for_act(act)
+            .ok_or_else(|| format!("unknown pipe destination act {act}"))?
+            .clone();
+        let level = area.load_level(&self.archive)?;
+        let act_byte = if area.act <= 255 { area.act as u8 } else { 1 };
+        let mut session = Session::new_with_start(
+            Box::new(level),
+            CAMPAIGN_ZONE,
+            act_byte,
+            self.sets.clone(),
+            self.sonic.clone(),
+            self.tails.clone(),
+            Some(LevelStart { x, y }),
+        )
+        .map_err(|e| format!("pipe area {}: {e}", area.act))?;
+        session.set_exit_on_restart(true);
+        self.seed_progress(&mut session);
+        {
+            let ram = &mut session.world.ram;
+            ram.w16(vars::RING_COUNT, previous.u16(vars::RING_COUNT));
+            ram.w32(vars::TIMER, previous.u32(vars::TIMER));
+            ram.w8(vars::LIFE_COUNT, previous.u8(vars::LIFE_COUNT));
+            ram.w32(vars::SCORE, previous.u32(vars::SCORE));
+            ram.w8(vars::EXTRA_LIFE_FLAGS, previous.u8(vars::EXTRA_LIFE_FLAGS));
+            ram.w8(vars::LIFE_COUNT_P2, previous.u8(vars::LIFE_COUNT_P2));
+            ram.w16(vars::RING_COUNT_P2, previous.u16(vars::RING_COUNT_P2));
+            ram.w32(vars::TIMER_P2, previous.u32(vars::TIMER_P2));
+            ram.w8(
+                vars::EXTRA_LIFE_FLAGS_P2,
+                previous.u8(vars::EXTRA_LIFE_FLAGS_P2),
+            );
+            for slot in [
+                vars::SONIC_SHIELD,
+                vars::TAILS_SHIELD,
+                vars::SONIC_INVINCIBILITY_STARS,
+                vars::TAILS_INVINCIBILITY_STARS,
+            ] {
+                ram.bytes_mut()[slot as usize..slot as usize + 0x40]
+                    .copy_from_slice(&previous.bytes()[slot as usize..slot as usize + 0x40]);
+            }
+        }
+        for slot in [vars::MAIN_CHARACTER, vars::SIDEKICK] {
+            let old = engine_core::Obj::new(slot);
+            let new = engine_core::Obj::new(slot);
+            new.set_status_secondary(&mut session.world.ram, old.status_secondary(previous));
+            new.set_invulnerable_time(&mut session.world.ram, old.invulnerable_time(previous));
+            new.set_invincibility_time(&mut session.world.ram, old.invincibility_time(previous));
+            new.set_speed_shoes_time(&mut session.world.ram, old.speed_shoes_time(previous));
+        }
+        session.set_pipe_exit_direction(exit_direction);
+        if let Ok(audio) = load_audio_assets_for_area(&self.archive, &area.directory) {
+            session.enable_audio(audio);
+            session.play_effect("pipe");
+        }
+        self.map_audio = None;
+        self.session = Some(session);
+        self.current_act = Some(act);
         self.last_error = None;
         Ok(())
     }
 
     /// One game frame. Map actions load a level; an exited level returns to the map.
+    #[allow(dead_code)]
     pub fn step(&mut self, buttons: u8) {
+        self.step_p2(buttons, 0);
+    }
+
+    /// One game frame with Tails' pad. In 1-player mode player 2 is ignored.
+    pub fn step_p2(&mut self, buttons: u8, buttons_p2: u8) {
         self.ticks += 1;
         if let Some(mut entry) = self.entry.take() {
             if let Some(audio) = self.map_audio.as_mut() {
@@ -217,7 +384,16 @@ impl CampaignRunner {
             return;
         }
         if let Some(session) = self.session.as_mut() {
-            session.step(buttons).ok();
+            let p2 = if self.flow.progress.two_player {
+                buttons_p2
+            } else {
+                0
+            };
+            session.step_with_p2(buttons, p2).ok();
+            if let Some(exit) = session.take_pipe_exit() {
+                self.handle_pipe_exit(exit);
+                return;
+            }
             if session.exited() {
                 self.finish_level();
             }

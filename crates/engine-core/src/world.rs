@@ -48,9 +48,33 @@ pub struct RingSpawn {
 }
 
 /// What [`World`] needs from one act. `rom-assets` implements this for its `LevelData`.
+/// The SMB3 gameplay metadata: the tile map and its pipes (the legacy `Smb3Gameplay`).
+#[derive(Clone, Debug, Default)]
+pub struct Gameplay {
+    pub pipes: Vec<GameplayPipe>,
+    pub initial_exit_direction: i32,
+    pub map_pipeway: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct GameplayPipe {
+    pub x: i32,
+    pub y: i32,
+    pub direction: i32,
+    pub kind: String,
+    pub target_x: i32,
+    pub target_y: i32,
+    pub exit_direction: i32,
+    pub path: Vec<[i32; 2]>,
+}
+
 pub trait LevelSource {
     /// Chunks, layout, blocks, collision indexes and palette (the legacy `LevelDataLoad`).
     fn fill_level_ram(&self, ram: &mut Ram, zone: u8, act: u8);
+    /// SMB3 pipe metadata, when the act is a converted Mario area.
+    fn gameplay(&self) -> Option<Gameplay> {
+        None
+    }
     fn bounds(&self) -> Bounds;
     fn start(&self) -> Start;
     /// The SMB3 water map, when the act has gameplay metadata (`Smb3Gameplay.IsWater`).

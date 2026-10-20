@@ -38,6 +38,8 @@ pub struct MapProgress {
     pub deck: Option<Vec<i32>>,
     pub deck_matches: i32,
     pub power_ups: Vec<i32>,
+    /// Tails is player 2 (the title's 2 PLAYER selection).
+    pub two_player: bool,
 }
 impl Default for MapProgress {
     fn default() -> Self {
@@ -54,6 +56,7 @@ impl Default for MapProgress {
             deck: None,
             deck_matches: 0,
             power_ups: Vec::new(),
+            two_player: false,
         }
     }
 }
@@ -298,8 +301,10 @@ impl GameFlow {
                 s.step(&self.assets, buttons);
                 match s.take_action() {
                     Some(TitleAction::StartGame) => {
+                        let two_player = s.players() == 1;
                         self.sound_effects.push("mario-coin");
                         self.progress = MapProgress::default();
+                        self.progress.two_player = two_player;
                         self.screen = ScreenState::Map(MapScreen::with_campaign(
                             &self.assets,
                             self.progress.clone(),
@@ -333,15 +338,30 @@ impl GameFlow {
                     action = None;
                 }
             }
-            ScreenState::Match(s) => s.step(&self.assets, buttons),
+            ScreenState::Match(s) => {
+                s.step(&self.assets, buttons);
+                if s.finished() {
+                    let mut progress = s.progress().clone();
+                    progress.clear_panel(SPADE_TILE);
+                    self.progress = progress;
+                    self.screen = ScreenState::Map(MapScreen::with_campaign(
+                        &self.assets,
+                        self.progress.clone(),
+                        false,
+                        self.assets.campaign.clone(),
+                    ));
+                }
+            }
         }
         action
     }
 
     pub fn take_map_sound_effects(&mut self) -> Vec<&'static str> {
         let mut out = std::mem::take(&mut self.sound_effects);
-        if let ScreenState::Map(s) = &mut self.screen {
-            out.extend(s.take_sound_effects());
+        match &mut self.screen {
+            ScreenState::Map(s) => out.extend(s.take_sound_effects()),
+            ScreenState::Match(s) => out.extend(s.take_sound_effects()),
+            ScreenState::Title(_) => {}
         }
         out
     }
@@ -398,6 +418,34 @@ impl GameFlow {
     }
 }
 
+const FLIPPED: i32 = 0x80;
+const CARD_MUSHROOM: i32 = 0;
+const CARD_FLOWER: i32 = 1;
+const CARD_STAR: i32 = 2;
+const CARD_ONE_UP: i32 = 3;
+const CARD_TEN_COIN: i32 = 4;
+const CARD_TWENTY_COIN: i32 = 5;
+const CARD_WILD: i32 = 8;
+const CARD_SELECT_PATTERN: usize = 0xD6BB;
+const CARD_SELECT_ATTRIBUTE: usize = 0xD6C5;
+const CARD_CURSOR_XS: usize = 0xD6CF;
+const CARD_CURSOR_YS: usize = 0xD6E1;
+const CARD_FLIP_ATTRIBUTES: usize = 0xD6F3;
+const CARD_FLIP_FRAME_DEFS: usize = 0xD6F8;
+const CARD_FLIP_FRAME_DEF_OFF: usize = 0xD70C;
+const CARD_INITIAL_SET: usize = 0xD711;
+const CARD_VRAM_HI: usize = 0xD723;
+const CARD_VRAM_LO: usize = 0xD735;
+const CARD_FACE_ATTRIBUTE: usize = 0xD75F;
+const CARD_VRAM_ATTR_LO: usize = 0xD765;
+const CARD_BOTTOM_LEFT: usize = 0xD77C;
+const CARD_BOTTOM_RIGHT: usize = 0xD77F;
+const CARD_BASE_BUF_CMDS: usize = 0xDD78;
+const CARD_BLACKOUT_BUF_CMDS: usize = 0xDD94;
+const CARD_BACK_BUF_CMDS: usize = 0xDDB1;
+const CARD_BUF_CMDS_LENGTH: usize = 0x1C;
+const CARD_BLACKOUT_LENGTH: usize = 0x1D;
+
 pub struct MatchScreen {
     pub ctx: FrontContext,
     progress: MapProgress,
@@ -408,9 +456,31 @@ pub struct MatchScreen {
     text_pos: usize,
     text_v: usize,
     pause: i32,
+    wait: i32,
     fade_left: i32,
+    fade_mode: i32,
     room: bool,
     table: std::collections::HashSet<(usize, usize)>,
+    // N-Spade card game.
+    state: i32,
+    index: i32,
+    first_index: i32,
+    match_card: i32,
+    flip_count: i32,
+    flip_frame: i32,
+    anim_tick: i32,
+    move_delay: i32,
+    turns_remain: i32,
+    matches: i32,
+    rings_to_give: i32,
+    flip_back: i32,
+    flip_card: i32,
+    deck: Vec<i32>,
+    cursor: bool,
+    face_up: [bool; 18],
+    extra_sprites: Vec<(i32, i32, u8, u16)>,
+    finished: bool,
+    pub sound_effects: Vec<&'static str>,
 }
 impl MatchScreen {
     pub fn new(a: &FrontendAssets, progress: MapProgress) -> Self {
@@ -427,9 +497,30 @@ impl MatchScreen {
             text_pos: 0,
             text_v: 0x28C5,
             pause: 4,
+            wait: 0,
             fade_left: 0,
+            fade_mode: 1,
             room: true,
             table: std::collections::HashSet::new(),
+            state: 0,
+            index: 0,
+            first_index: 0,
+            match_card: 0,
+            flip_count: 0,
+            flip_frame: -1,
+            anim_tick: 0,
+            move_delay: 0,
+            turns_remain: 1,
+            matches: 0,
+            rings_to_give: 0,
+            flip_back: 0,
+            flip_card: -1,
+            deck: Vec::new(),
+            cursor: true,
+            face_up: [false; 18],
+            extra_sprites: Vec::new(),
+            finished: false,
+            sound_effects: Vec::new(),
         };
         s.init_room();
         s
@@ -482,8 +573,10 @@ impl MatchScreen {
         self.fade_left = 22;
     }
     fn status_draw(&mut self) {
-        self.ppu.run_stream(|a| self.ctx.assets.prg(30, a), 0x811B);
-        let b = 0x2B00;
+        self.status_draw_at(0x811B, 0x2B00);
+    }
+    fn status_draw_at(&mut self, stream: usize, b: usize) {
+        self.ppu.run_stream(|a| self.ctx.assets.prg(30, a), stream);
         self.ppu.write(b + 0x26, 0xF0 + self.progress.world as u8);
         self.ppu.write(b + 0x42, 0x74);
         self.ppu.write(b + 0x43, 0x75);
@@ -524,9 +617,14 @@ impl MatchScreen {
         let bank = if addr >= 0xC000 { 22 } else { 30 };
         self.ppu.run_stream(|a| self.ctx.assets.prg(bank, a), addr);
     }
-    fn present(&mut self) {
+
+    // ------------------------------------------------------------ intro room
+
+    fn present_room(&mut self) {
         let p = &mut self.ctx;
         let mut nes = NesPresenter::new(&mut p.vram, &mut p.ram, &p.assets);
+        nes.overrides.insert((0x5D, 0x34), glyph(&S_BADGE, 0, 0));
+        nes.overrides.insert((0x5D, 0x35), glyph(&S_BADGE, 8, 0));
         nes.bg_banks = [0x24, 0x25, 0x5E, 0x5F];
         let high = |c: usize| self.table.contains(&(c, 0));
         for row in 0..24 {
@@ -555,7 +653,7 @@ impl MatchScreen {
         }
         nes.palettes(
             &self.ppu,
-            if self.fade_left > 0 {
+            if self.fade_mode == 1 && self.fade_left > 0 {
                 vars::TARGET_PALETTE
             } else {
                 vars::NORMAL_PALETTE
@@ -569,13 +667,556 @@ impl MatchScreen {
         sk.frame(&p.assets.sonic, 1, 40 + 32, 124 - 8, 0x500, false, false);
         sk.end();
     }
+
+    // ------------------------------------------------------------ cards
+
+    fn begin_cards(&mut self) {
+        self.room = false;
+        self.phase = 3;
+        self.ppu.horizontal_mirroring = true;
+        self.ppu.clear(0xFF);
+        self.video_update(0x0D);
+        self.status_draw_at(0x819A, 0x2300);
+        if let Some(deck) = self.progress.deck.clone() {
+            self.deck = deck;
+            self.matches = self.progress.deck_matches;
+        } else {
+            self.deck = (0..18)
+                .map(|i| self.prg22(CARD_INITIAL_SET + i) as i32)
+                .collect();
+            let seed = (self.frames as u32).wrapping_mul(0x9E37)
+                ^ self.progress.score as u32
+                ^ ((self.progress.lives as u32) << 8);
+            let mut pool = [0u8; 10];
+            for (i, b) in pool.iter_mut().enumerate() {
+                *b = ((seed >> ((i % 4) * 8)) ^ (0x88 + i as u32 * 37)) as u8;
+            }
+            self.shuffle(&mut pool);
+            self.progress.deck = Some(self.deck.clone());
+            self.progress.deck_matches = 0;
+            self.matches = 0;
+        }
+        self.face_up = [false; 18];
+        for i in (0..18).rev() {
+            if (self.deck[i] & FLIPPED) != 0 {
+                self.render_face(i as i32);
+            } else {
+                self.render_back(i as i32);
+            }
+        }
+        self.index = 0;
+        self.turns_remain = 1;
+        self.cursor = true;
+        self.state = 0;
+        self.extra_sprites.clear();
+        self.ctx.begin_fade_in();
+        self.fade_mode = 1;
+        self.fade_left = 16;
+    }
+
+    fn step_cards(&mut self, buttons: u8) {
+        self.extra_sprites.clear();
+        match self.state {
+            0 => {
+                self.do_selection(buttons);
+                self.cursor = true;
+            }
+            1 => self.begin_flip(),
+            2 => self.do_flip(),
+            3 => {
+                self.flip_count += 1;
+                self.check_for_match();
+            }
+            4 => self.handle_match(),
+            5 => self.handle_mismatch(),
+            6 => {
+                self.move_delay -= 1;
+                if self.move_delay < 0 {
+                    self.finished = true;
+                }
+            }
+            7 => self.begin_flip_back(),
+            8 => self.flip_back_card(),
+            _ => {}
+        }
+    }
+
+    fn do_selection(&mut self, buttons: u8) {
+        if self.move_delay != 0 {
+            self.move_delay -= 1;
+            return;
+        }
+        if (buttons & 0x40) != 0 || (buttons & 0x30) != 0 {
+            self.state = 1;
+            self.cursor = false;
+            return;
+        }
+        if (buttons & 0x0F) == 0 {
+            return;
+        }
+        self.move_delay = 8;
+        if (buttons & 0x01) != 0 {
+            self.index -= 6;
+            if self.index < 0 {
+                self.index += 18;
+            }
+        }
+        if (buttons & 0x02) != 0 {
+            self.index += 6;
+            if self.index >= 18 {
+                self.index -= 18;
+            }
+        }
+        if (buttons & 0x08) != 0 {
+            self.index += 1;
+            if self.index >= 18 {
+                self.index = 0;
+            }
+        }
+        if (buttons & 0x04) != 0 {
+            self.index -= 1;
+            if self.index < 0 {
+                self.index = 17;
+            }
+        }
+    }
+
+    fn begin_flip(&mut self) {
+        if (self.deck[self.index as usize] & FLIPPED) != 0 {
+            self.state = 0;
+            return;
+        }
+        self.flip_frame = 4;
+        self.flip_card = self.index;
+        self.blackout(self.index);
+        self.anim_tick = 0;
+        self.state = 2;
+        self.do_flip();
+    }
+
+    fn do_flip(&mut self) {
+        if self.anim_tick != 0 {
+            self.anim_tick -= 1;
+            self.draw_flip(self.flip_card);
+            return;
+        }
+        self.draw_flip(self.flip_card);
+        self.flip_frame -= 1;
+        if self.flip_frame < 0 {
+            self.render_face(self.index);
+            self.flip_card = -1;
+            self.state = 3;
+        }
+        self.anim_tick = 4;
+    }
+
+    fn check_for_match(&mut self) {
+        if (self.flip_count & 1) != 0 {
+            self.first_index = self.index;
+            self.match_card = self.deck[self.index as usize];
+            self.deck[self.index as usize] |= FLIPPED;
+            self.state = 0;
+            return;
+        }
+        let card = self.deck[self.index as usize];
+        if card == self.match_card {
+            self.state = 4;
+            return;
+        }
+        if card == CARD_WILD {
+            self.deck[self.index as usize] = self.match_card;
+            self.state = 4;
+            return;
+        }
+        if self.match_card == CARD_WILD {
+            self.deck[self.first_index as usize] = card | FLIPPED;
+            self.state = 4;
+            return;
+        }
+        self.state = 5;
+        self.move_delay = 0x30;
+    }
+
+    fn handle_match(&mut self) {
+        self.deck[self.index as usize] |= FLIPPED;
+        self.state = 0;
+        self.matches += 1;
+        self.progress.deck_matches = self.matches;
+        let card = self.deck[self.index as usize] & 0x0F;
+        self.reward(card);
+        if self.matches == 9 {
+            self.state = 6;
+            self.move_delay = 0x40;
+            self.progress.deck = None;
+        }
+    }
+
+    fn handle_mismatch(&mut self) {
+        self.flip_frame = 0;
+        self.flip_back = 1;
+        self.state = 7;
+        self.move_delay = 0x40;
+        self.deck[self.index as usize] &= 0x7F;
+        self.deck[self.first_index as usize] &= 0x7F;
+        self.turns_remain -= 1;
+        if self.turns_remain < 0 {
+            self.state = 6;
+        }
+    }
+
+    fn begin_flip_back(&mut self) {
+        if self.move_delay != 0 {
+            self.move_delay -= 1;
+            return;
+        }
+        self.flip_frame = 0;
+        self.flip_card = if self.flip_back == 1 {
+            self.index
+        } else {
+            self.first_index
+        };
+        self.blackout(self.flip_card);
+        self.state = 8;
+        self.anim_tick = 0;
+        self.flip_back_card();
+    }
+
+    fn flip_back_card(&mut self) {
+        if self.anim_tick != 0 {
+            self.anim_tick -= 1;
+            self.draw_flip(self.flip_card);
+            return;
+        }
+        self.draw_flip(self.flip_card);
+        self.flip_frame += 1;
+        if self.flip_frame >= 5 {
+            self.render_back(self.flip_card);
+            self.flip_card = -1;
+            self.flip_back -= 1;
+            if self.flip_back >= 0 {
+                self.move_delay = 2;
+                self.state = 7;
+            } else {
+                self.state = 0;
+            }
+            return;
+        }
+        self.anim_tick = 4;
+    }
+
+    fn reward(&mut self, card: i32) {
+        match card {
+            CARD_ONE_UP => {
+                self.progress.lives = (self.progress.lives + 1).min(99);
+                self.sound_effects.push("mario-1up");
+            }
+            CARD_TEN_COIN | CARD_TWENTY_COIN => {
+                self.rings_to_give += if card == CARD_TEN_COIN { 10 } else { 20 };
+            }
+            _ => {
+                self.progress.power_ups.push(match card {
+                    CARD_MUSHROOM => 5,
+                    CARD_FLOWER => 6,
+                    _ => 7,
+                });
+                self.sound_effects.push("mario-powerup");
+            }
+        }
+        self.status_values(0x2300);
+    }
+
+    fn give_rings(&mut self) {
+        if self.rings_to_give == 0 {
+            return;
+        }
+        self.rings_to_give -= 1;
+        self.progress.rings += 1;
+        self.progress.score += 100;
+        self.sound_effects.push("mario-coin");
+        if self.progress.rings >= 100 {
+            self.progress.rings -= 100;
+            self.progress.lives = (self.progress.lives + 1).min(99);
+            self.sound_effects.push("mario-1up");
+        }
+        self.status_values(0x2300);
+    }
+
+    fn shuffle(&mut self, pool: &mut [u8; 10]) {
+        for _pass in (0..3).rev() {
+            self.randomize(pool);
+            let mut y = (pool[0] & 0x1F) as i32;
+            loop {
+                let last = self.deck[14];
+                for x in (0..14).rev() {
+                    self.deck[x + 1] = self.deck[x];
+                }
+                self.deck[0] = last;
+                y -= 1;
+                if y < 0 {
+                    break;
+                }
+            }
+            self.deck.swap(0, 5);
+            self.deck.swap(0, 10);
+        }
+    }
+
+    fn randomize(&self, pool: &mut [u8; 10]) {
+        let mut carry = ((pool[0] & 2) ^ (pool[1] & 2)) != 0;
+        for i in 0..9 {
+            let next = (pool[i] & 1) != 0;
+            pool[i] = (pool[i] >> 1) | if carry { 0x80 } else { 0 };
+            carry = next;
+        }
+    }
+
+    // ------------------------------------------------------------ card drawing
+
+    fn prg22(&self, addr: usize) -> u8 {
+        self.ctx.assets.prg(22, addr)
+    }
+
+    fn template(&self, addr: usize, length: usize) -> Vec<u8> {
+        (0..length).map(|i| self.prg22(addr + i)).collect()
+    }
+
+    fn run_card(&mut self, mut buf: Vec<u8>, card: i32, attribute: bool, attr: u8) {
+        let mut v = ((self.prg22(CARD_VRAM_HI + card as usize) as usize) << 8)
+            | self.prg22(CARD_VRAM_LO + card as usize) as usize;
+        for row in 0..4 {
+            buf[row * 7] = (v >> 8) as u8;
+            buf[row * 7 + 1] = v as u8;
+            v += 32;
+        }
+        let mut stream = buf;
+        if attribute {
+            stream.extend_from_slice(&[
+                0x23,
+                self.prg22(CARD_VRAM_ATTR_LO + card as usize),
+                0x01,
+                attr,
+            ]);
+        }
+        stream.push(0);
+        self.ppu.run_stream(|i| stream[i], 0);
+    }
+
+    fn render_back(&mut self, card: i32) {
+        if !(0..18).contains(&card) {
+            return;
+        }
+        self.face_up[card as usize] = false;
+        let buf = self.template(CARD_BACK_BUF_CMDS, CARD_BUF_CMDS_LENGTH);
+        self.run_card(buf, card, true, 0xFF);
+    }
+
+    fn blackout(&mut self, card: i32) {
+        if !(0..18).contains(&card) {
+            return;
+        }
+        self.face_up[card as usize] = false;
+        let buf = self.template(CARD_BLACKOUT_BUF_CMDS, CARD_BLACKOUT_LENGTH - 1);
+        self.run_card(buf, card, false, 0xFF);
+    }
+
+    fn render_face(&mut self, card: i32) {
+        if !(0..18).contains(&card) {
+            return;
+        }
+        let mut buf = self.template(CARD_BASE_BUF_CMDS, CARD_BUF_CMDS_LENGTH);
+        let face = self.deck[card as usize] & 0x7F;
+        let mut attr = self.prg22(CARD_FACE_ATTRIBUTE + face as usize);
+        if !(6..12).contains(&card) {
+            attr = (attr << 4) | 0x0F;
+        }
+        if face >= CARD_ONE_UP {
+            buf[0x19] = self.prg22(CARD_BOTTOM_LEFT + (face - CARD_ONE_UP) as usize);
+            buf[0x1A] = self.prg22(CARD_BOTTOM_RIGHT + (face - CARD_ONE_UP) as usize);
+        }
+        self.run_card(buf, card, true, attr);
+        self.face_up[card as usize] = true;
+    }
+
+    fn sprite_tile(&mut self, tile: u8, pal: usize) -> u16 {
+        let p = &mut self.ctx;
+        let mut nes = NesPresenter::new(&mut p.vram, &mut p.ram, &p.assets);
+        nes.sprite_banks = [0x28, 0x29, 0x5A, 0x2B];
+        nes.sprite_tile(tile, pal) as u16
+    }
+
+    fn draw_flip(&mut self, card: i32) {
+        if card < 0 {
+            return;
+        }
+        let x0 = self.prg22(CARD_CURSOR_XS + card as usize) as i32 + 8;
+        let y0 = self.prg22(CARD_CURSOR_YS + card as usize) as i32 + 8;
+        let frame = self.flip_frame.clamp(0, 4);
+        let pal = (self.prg22(CARD_FLIP_ATTRIBUTES + frame as usize) & 3) as usize;
+        let def = self.prg22(CARD_FLIP_FRAME_DEF_OFF + frame as usize) as usize;
+        for i in 0..4 {
+            let pattern = self.prg22(CARD_FLIP_FRAME_DEFS + def + i);
+            let hflip = (i & 1) != 0;
+            let t = self.sprite_tile(pattern, pal);
+            self.extra_sprites.push((
+                x0 + (i as i32 & 1) * 8,
+                y0 + (i as i32 >> 1) * 16,
+                1,
+                0xE000 | t | if hflip { 0x800 } else { 0 },
+            ));
+        }
+    }
+
+    fn draw_cursor(&mut self) {
+        let x0 = self.prg22(CARD_CURSOR_XS + self.index as usize) as i32;
+        let mut y = self.prg22(CARD_CURSOR_YS + self.index as usize) as i32;
+        let mut x = x0;
+        let mut n = 0usize;
+        for _ in 0..4 {
+            self.push_cursor(x, y, n);
+            n += 1;
+            x += 8;
+        }
+        y += 16;
+        self.push_cursor(x0, y, n);
+        n += 1;
+        self.push_cursor(x0 + 24, y, n);
+        n += 1;
+        y += 16;
+        x = x0;
+        for _ in 0..4 {
+            self.push_cursor(x, y, n);
+            n += 1;
+            x += 8;
+        }
+    }
+
+    fn push_cursor(&mut self, x: i32, y: i32, n: usize) {
+        let pattern = self.prg22(CARD_SELECT_PATTERN + n);
+        let attr = self.prg22(CARD_SELECT_ATTRIBUTE + n);
+        let t = self.sprite_tile(pattern, (attr & 3) as usize);
+        let mut p = 0xE000 | t;
+        if (attr & 0x40) != 0 {
+            p |= 0x800;
+        }
+        if (attr & 0x80) != 0 {
+            p |= 0x1000;
+        }
+        self.extra_sprites.push((x, y, 1, p));
+    }
+
+    fn present_cards(&mut self) {
+        let extra = self.extra_sprites.clone();
+        let face_up = self.face_up;
+        let deck = self.deck.clone();
+        let cards = self.progress.cards.clone();
+        let monitor = self.ctx.assets.monitor.clone();
+        let mut icons: Vec<(i32, i32, u8, u16)> = Vec::new();
+        for (i, up) in face_up.iter().enumerate() {
+            if !up {
+                continue;
+            }
+            let face = deck[i] & 0x0F;
+            let frame = match face {
+                CARD_MUSHROOM => 6,
+                CARD_FLOWER => 7,
+                CARD_STAR => 8,
+                CARD_ONE_UP => 2,
+                _ => 5,
+            };
+            let Some(piece) = monitor.frames.get(frame).and_then(|f| f.first()) else {
+                continue;
+            };
+            let v = ((self.prg22(CARD_VRAM_HI + i) as usize) << 8)
+                | self.prg22(CARD_VRAM_LO + i) as usize;
+            let col = (v & 0x1F) + 1;
+            let row = ((v - 0x2000) >> 5) + 1;
+            let pattern = if frame == 2 {
+                0x5C0
+            } else {
+                ((piece.pattern as usize & 0x7FF) + 0x580) | (piece.pattern as usize & 0x6000)
+            };
+            icons.push((
+                col as i32 * 8 + 32,
+                row as i32 * 8 - 8,
+                piece.size,
+                0x8000 | pattern as u16,
+            ));
+        }
+        let p = &mut self.ctx;
+        let mut nes = NesPresenter::new(&mut p.vram, &mut p.ram, &p.assets);
+        nes.overrides.insert((0x5D, 0x34), glyph(&S_BADGE, 0, 0));
+        nes.overrides.insert((0x5D, 0x35), glyph(&S_BADGE, 8, 0));
+        nes.bg_banks = [0x5C, 0x5D, 0x5E, 0x5F];
+        nes.sprite_banks = [0x28, 0x29, 0x5A, 0x2B];
+        for row in 0..30 {
+            nes.row(
+                &self.ppu,
+                0,
+                row,
+                PLANE_A,
+                row,
+                None::<&fn(i32) -> Option<usize>>,
+                None::<&fn(usize) -> bool>,
+            );
+        }
+        nes.palettes(
+            &self.ppu,
+            if self.fade_mode == 1 && self.fade_left > 0 {
+                vars::TARGET_PALETTE
+            } else {
+                vars::NORMAL_PALETTE
+            },
+        );
+        let mut sk = SpriteKit::new(&mut p.ram, &mut p.vram);
+        sk.begin();
+        for (x, y, size, pattern) in extra {
+            sk.piece(x + 32, y + 1 - 8, size, pattern);
+        }
+        for (x, y, size, pattern) in icons {
+            sk.piece(x, y, size, pattern);
+        }
+        for (i, card) in cards.iter().take(3).enumerate() {
+            let frame = match card {
+                Card::Ring => 5,
+                Card::Shield => 7,
+                Card::Invincibility => 8,
+            };
+            let Some(piece) = monitor.frames.get(frame).and_then(|f| f.first()) else {
+                continue;
+            };
+            sk.piece(
+                32 + (22 + i as i32 * 3) * 8,
+                25 * 8 - 8,
+                piece.size,
+                ((piece.pattern as usize + 0x580) as u16) | 0x8000,
+            );
+        }
+        sk.end();
+    }
+
     pub fn step(&mut self, _a: &FrontendAssets, buttons: u8) {
+        if self.finished {
+            return;
+        }
         if self.fade_left > 0 {
             self.fade_left -= 1;
             if self.fade_left > 0 {
-                self.ctx.fade_in_step();
+                if self.fade_mode == 2 {
+                    self.ctx.fade_out_step();
+                } else {
+                    self.ctx.fade_in_step();
+                }
             }
-            self.present();
+            if self.phase >= 3 {
+                self.present_cards();
+            } else {
+                self.present_room();
+            }
+            if self.fade_left == 0 && self.phase == 4 && self.fade_mode == 2 {
+                self.begin_cards();
+                self.fade_mode = 1;
+                self.fade_left = 16;
+            }
             return;
         }
         self.frames += 1;
@@ -587,7 +1228,7 @@ impl MatchScreen {
                     self.phase = 1;
                     self.text_v = 0x28C5;
                 }
-                self.present();
+                self.present_room();
                 return;
             }
         }
@@ -600,6 +1241,7 @@ impl MatchScreen {
                     if ch != 0 {
                         if ch == 0xFF {
                             self.phase = 2;
+                            self.wait = 0xA0;
                             break;
                         }
                         self.text_pos += 1;
@@ -611,16 +1253,43 @@ impl MatchScreen {
                     self.text_pos += 1;
                 }
             }
-            self.present();
+            self.present_room();
             return;
         }
         if self.phase == 2 {
-            if buttons & 0xF0 != 0 || self.frames > 10000 {
-                self.phase = 3;
+            self.wait -= 1;
+            if self.wait <= 0 || (buttons & 0xF0) != 0 {
+                self.phase = 4;
+                self.fade_left = 22;
+                self.fade_mode = 2;
             }
-            self.present();
+            self.present_room();
+            return;
         }
+        if self.phase == 4 {
+            self.present_room();
+            return;
+        }
+        self.give_rings();
+        self.step_cards(buttons);
+        if self.state == 0 && self.cursor {
+            self.draw_cursor();
+        }
+        self.present_cards();
     }
+
+    pub fn finished(&self) -> bool {
+        self.finished
+    }
+
+    pub fn progress(&self) -> &MapProgress {
+        &self.progress
+    }
+
+    pub fn take_sound_effects(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.sound_effects)
+    }
+
     pub fn render_hash(&mut self, v: &mut Vdp, _a: &FrontendAssets) -> u64 {
         let line = |line: usize| Some(if line + 8 < 193 { 8 } else { 7 });
         self.ctx.render_hash(v, &line, &line)
@@ -631,6 +1300,7 @@ impl MatchScreen {
         self.ctx.render_rgba(v, &line, &line)
     }
 }
+
 pub const LEVEL11_TILE: i32 = 4;
 pub const LEVEL12_TILE: i32 = 8;
 pub const LEVEL13_TILE: i32 = 10;
@@ -747,6 +1417,8 @@ impl MapScreen {
         s.ctx.vram[0x580 * 32..0x580 * 32 + n].copy_from_slice(&mon[..n]);
         let mini = mini_sonic_tiles();
         s.ctx.vram[0x5C0 * 32..0x5C0 * 32 + mini.len()].copy_from_slice(&mini);
+        let mini_t = mini_tails_tiles();
+        s.ctx.vram[0x5C8 * 32..0x5C8 * 32 + mini_t.len()].copy_from_slice(&mini_t);
         for q in 0..4 {
             s.overrides
                 .insert((0x16, 0x08 + q), glyph(&S_PANEL, (q >> 1) * 8, (q & 1) * 8));
@@ -927,6 +1599,27 @@ impl MapScreen {
                 ))
             })
             .collect();
+        let item_pieces: Vec<(i32, i32, u8, u16)> = self
+            .progress
+            .power_ups
+            .iter()
+            .take(3)
+            .enumerate()
+            .filter_map(|(i, item)| {
+                let frame = match item {
+                    5 => 5,
+                    6 => 7,
+                    _ => 8,
+                };
+                let piece = self.ctx.assets.monitor.frames.get(frame)?.first()?;
+                Some((
+                    32 + (22 + i as i32 * 3) * 8,
+                    27 * 8 - 8,
+                    piece.size,
+                    ((piece.pattern as usize + 0x580) as u16) | 0x8000,
+                ))
+            })
+            .collect();
         let p = &mut self.ctx;
         let mut nes = NesPresenter::new(&mut p.vram, &mut p.ram, &p.assets);
         nes.overrides = self.overrides.clone();
@@ -971,7 +1664,18 @@ impl MapScreen {
             5,
             (0x8000 | (0x5C0 + fr * 4)) as u16,
         );
+        if self.progress.two_player {
+            sk.piece(
+                self.x + 32 + 18,
+                self.y - 8 - 1,
+                5,
+                (0x8000 | (0x5C8 + fr * 4)) as u16,
+            );
+        }
         for (x, y, size, pattern) in card_pieces {
+            sk.piece(x, y, size, pattern);
+        }
+        for (x, y, size, pattern) in item_pieces {
             sk.piece(x, y, size, pattern);
         }
         sk.end();
@@ -1188,6 +1892,65 @@ fn mini_sonic_tiles() -> Vec<u8> {
                     b'P' => 11,
                     b'r' => 12,
                     b'R' => 13,
+                    _ => 0,
+                };
+                let tile = f * 4 + (x >> 3) * 2 + (y >> 3);
+                let i = tile * 32 + (y & 7) * 4 + (x & 7) / 2;
+                d[i] |= if x & 1 == 0 { c << 4 } else { c };
+            }
+        }
+    }
+    d
+}
+
+fn mini_tails_tiles() -> Vec<u8> {
+    const F0: [&str; 16] = [
+        "................",
+        "....kkkkkk......",
+        "...kooooooook...",
+        "..koooooooooook.",
+        ".koooooooooooook",
+        ".kookwwkwwkooook",
+        "..kkowwkwwkoook.",
+        "...koowwwwwoook.",
+        "...koooooooook..",
+        "....kkoooookk...",
+        "....kowwwkook...",
+        "....koooooook...",
+        ".....kkoookk....",
+        "....koo..ook....",
+        "...kooo..kooo...",
+        "...kkkk..kkkk...",
+    ];
+    const F1: [&str; 16] = [
+        "................",
+        "....kkkkkk......",
+        "...kooooooook...",
+        "..koooooooooook.",
+        ".koooooooooooook",
+        ".kookwwkwwkooook",
+        "..kkowwkwwkoook.",
+        "...koowwwwwoook.",
+        "...koooooooook..",
+        "....kkoooookk...",
+        "....kowwwkook...",
+        "....koooooook...",
+        "....kkoooookk...",
+        "...koookoook....",
+        "..kooo..kooo....",
+        "..kkkk..kkkk....",
+    ];
+    let mut d = vec![0u8; 2 * 4 * 32];
+    let frames = [F0, F1];
+    for f in 0..2 {
+        for y in 0..16 {
+            for x in 0..16 {
+                let c = match frames[f][y].as_bytes()[x] {
+                    b'k' => 1,
+                    b'o' => 10,
+                    b'O' => 11,
+                    b'w' => 6,
+                    b'b' => 2,
                     _ => 0,
                 };
                 let tile = f * 4 + (x >> 3) * 2 + (y >> 3);

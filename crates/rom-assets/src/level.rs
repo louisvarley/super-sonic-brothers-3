@@ -390,6 +390,45 @@ impl engine_core::world::LevelSource for LevelData {
         self.start
     }
 
+    fn gameplay(&self) -> Option<engine_core::world::Gameplay> {
+        let gameplay = self.gameplay.as_ref()?;
+        let pipes = gameplay["pipes"]
+            .as_array()
+            .map(|pipes| {
+                pipes
+                    .iter()
+                    .map(|p| engine_core::world::GameplayPipe {
+                        x: p["x"].as_i64().unwrap_or(0) as i32,
+                        y: p["y"].as_i64().unwrap_or(0) as i32,
+                        direction: p["direction"].as_i64().unwrap_or(0) as i32,
+                        kind: p["kind"].as_str().unwrap_or("").to_string(),
+                        target_x: p["targetX"].as_i64().unwrap_or(0) as i32,
+                        target_y: p["targetY"].as_i64().unwrap_or(0) as i32,
+                        exit_direction: p["exitDirection"].as_i64().unwrap_or(0) as i32,
+                        path: p["path"]
+                            .as_array()
+                            .map(|path| {
+                                path.iter()
+                                    .map(|p| {
+                                        [
+                                            p[0].as_i64().unwrap_or(0) as i32,
+                                            p[1].as_i64().unwrap_or(0) as i32,
+                                        ]
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(engine_core::world::Gameplay {
+            pipes,
+            initial_exit_direction: gameplay["initialExitDirection"].as_i64().unwrap_or(0) as i32,
+            map_pipeway: gameplay["mapPipeway"].as_bool().unwrap_or(false),
+        })
+    }
+
     fn water_map(&self) -> Option<engine_core::player::WaterMap> {
         let gameplay = self.gameplay.as_ref()?;
         let columns = gameplay["columns"].as_i64()? as i32;
