@@ -5,6 +5,7 @@
 //! motion gate only depends on the physics, the players, the camera, the rings and the score.
 
 use crate::assets::{BridgeData, SpringSlopes};
+use crate::audio::sfx;
 use crate::collision::CollisionSets;
 use crate::math;
 use crate::objects::{
@@ -634,6 +635,7 @@ fn monitor_update(
 }
 
 fn monitor_break(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
+    sfx::sonic(ram, sfx::ids::EXPLOSION);
     let riders = o.status(ram) & 0x78;
     if riders != 0 {
         for (bit, p) in [
@@ -803,6 +805,7 @@ fn contents_rise(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
             let n = ram.u16(monitors).wrapping_add(1);
             ram.w16(monitors, n);
             p.set_has_shield(ram, true);
+            sfx::sonic(ram, sfx::ids::SHIELD);
             let shield = Obj::new(if o.byte(ram, 0x3F) != 0 {
                 vars::TAILS_SHIELD
             } else {
@@ -819,6 +822,7 @@ fn contents_rise(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
             }
             p.set_invincible(ram, true);
             p.set_invincibility_time(ram, 0x4B0);
+            sfx::music(ram, 0x97);
             let stars = Obj::new(if o.byte(ram, 0x3F) != 0 {
                 vars::TAILS_INVINCIBILITY_STARS
             } else {
@@ -981,6 +985,7 @@ fn spikes_hurt(ram: &mut Ram, o: Obj, player: Obj) {
 }
 
 fn spikes_move(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
+    sfx::sonic(ram, sfx::ids::SPIKES_MOVE);
     match o.subtype(ram) {
         0 => {}
         1 => {
@@ -1421,6 +1426,7 @@ fn player(n: usize) -> Obj {
 
 fn spring_bounce(ram: &mut Ram, o: Obj, anim: u8) {
     o.set_word(ram, 0x1C, (anim as u16) << 8);
+    sfx::sonic(ram, sfx::ids::SPRING);
 }
 
 fn twirl(ram: &mut Ram, p: Obj, subtype: u8, yellow_flips: u8, red_flips: u8) {

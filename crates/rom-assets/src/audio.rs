@@ -1,7 +1,7 @@
 //! Loader for the 68k SMPS player data and the SMB3 songs arranged for it.
 
 use crate::archive::{resolve, Archive};
-use engine_core::audio::AudioAssets;
+use engine_core::audio::{AudioAssets, PcmEffect};
 
 fn wav_data(b: &[u8]) -> Vec<u8> {
     let mut i = 12;
@@ -65,7 +65,86 @@ pub fn load_audio_assets(archive: &Archive) -> Result<AudioAssets, String> {
                 .push(s["pitch"].as_i64().unwrap_or(0) as i32);
         }
     }
+    a.pcm_effects = load_pcm_effects(archive);
     Ok(a)
+}
+
+/// Reads every `campaign/effects/*.pcm` in the archive (signed 16-bit little-endian, 48 kHz mono).
+pub fn load_pcm_effects(archive: &Archive) -> Vec<PcmEffect> {
+    let mut effects = load_pcm_effects_from_archive(archive);
+    // A locally generated `web-data/effects` set adds/overrides the two archive effects.
+    for generated in load_pcm_effects_from_dir() {
+        if let Some(existing) = effects.iter_mut().find(|e| e.name == generated.name) {
+            *existing = generated;
+        } else {
+            effects.push(generated);
+        }
+    }
+    effects.sort_by(|a, b| a.name.cmp(&b.name));
+    effects
+}
+
+fn load_pcm_effects_from_archive(archive: &Archive) -> Vec<PcmEffect> {
+    let mut names: Vec<&str> = archive
+        .names()
+        .filter(|n| n.starts_with("campaign/effects/") && n.ends_with(".pcm"))
+        .collect();
+    names.sort_unstable();
+    names
+        .into_iter()
+        .filter_map(|path| {
+            let bytes = archive.read(path).ok()?;
+            let name = path
+                .rsplit('/')
+                .next()
+                .unwrap_or(path)
+                .trim_end_matches(".pcm")
+                .to_string();
+            let samples = bytes
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .collect();
+            Some(PcmEffect { name, samples })
+        })
+        .collect()
+}
+
+fn load_pcm_effects_from_dir() -> Vec<PcmEffect> {
+    let candidates = [
+        std::path::PathBuf::from("web-data/effects"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web-data/effects"),
+    ];
+    for dir in candidates {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut effects = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("pcm") {
+                continue;
+            }
+            let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let samples = bytes
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .collect();
+            effects.push(PcmEffect {
+                name: name.to_string(),
+                samples,
+            });
+        }
+        if !effects.is_empty() {
+            effects.sort_by(|a, b| a.name.cmp(&b.name));
+            return effects;
+        }
+    }
+    Vec::new()
 }
 
 /// As [`load_audio_assets`], plus the act's SMB3 song (`zones/zone_XX/music.json`) when present.

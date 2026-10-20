@@ -335,6 +335,13 @@ impl GameFlow {
         action
     }
 
+    pub fn take_map_sound_effects(&mut self) -> Vec<&'static str> {
+        match &mut self.screen {
+            ScreenState::Map(s) => s.take_sound_effects(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn set_world_screen(&mut self, world: u8, map_screen: usize) {
         self.progress.world = world.clamp(1, 8) as i32;
         self.progress.map_screen = map_screen as i32;
@@ -659,6 +666,7 @@ pub struct MapScreen {
     pub ctx: FrontContext,
     pub progress: MapProgress,
     pub action: Option<MapAction>,
+    pub sound_effects: Vec<&'static str>,
     ppu: NesPpu,
     layout: [u8; 144],
     campaign: Option<CampaignMap>,
@@ -701,6 +709,7 @@ impl MapScreen {
             ctx: FrontContext::new(a.clone()),
             progress: progress.clone(),
             action: None,
+            sound_effects: Vec::new(),
             ppu: NesPpu {
                 horizontal_mirroring: false,
                 ..Default::default()
@@ -1004,6 +1013,7 @@ impl MapScreen {
                 && !self.progress.is_cleared(SPADE_TILE);
             let campaign_area = self.areas.get(&tile).filter(|a| a.available()).cloned();
             if legacy_stage || minigame || campaign_area.is_some() {
+                self.sound_effects.push("enter-level");
                 self.pending_action = Some(if legacy_stage {
                     let zone = panel_zone(tile).unwrap();
                     MapAction::StartZone { zone, act: 1 }
@@ -1103,6 +1113,10 @@ impl MapScreen {
 
     pub fn take_action(&mut self) -> Option<MapAction> {
         self.action.take()
+    }
+
+    pub fn take_sound_effects(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.sound_effects)
     }
 
     pub fn entry_progress(&self) -> i32 {

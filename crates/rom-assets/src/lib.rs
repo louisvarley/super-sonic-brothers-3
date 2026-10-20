@@ -17,7 +17,7 @@ pub use animation::{load_sonic_animation, load_tails_animation};
 pub use archive::Archive;
 pub use audio::{
     load_audio_assets, load_audio_assets_for_area, load_audio_assets_for_zone,
-    load_audio_assets_with_song,
+    load_audio_assets_with_song, load_pcm_effects,
 };
 pub use campaign::{CampaignArea, CampaignData, CampaignEntry, CampaignSource, CampaignWorld};
 pub use collision::load_collision_sets;

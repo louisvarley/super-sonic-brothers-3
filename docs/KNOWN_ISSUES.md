@@ -70,6 +70,15 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **reproduction** | `cargo test -p engine-core --test audio_driver_parity --test audio_smoke -- --nocapture`. |
 | **still open** | Sonic-zone Z80 (`legacy/src/SonicBros3/Audio/SmpsZ80Driver.cs`) is untouched; the front-end/title music also needs the Z80 path. Gameplay SFX requests are not wired to the driver yet. |
 
+## M6b gameplay SFX: Sonic 68k + SMB3 PCM
+
+| | |
+|---|---|
+| **id** | K6b |
+| **state** | Sonic events use the existing 68k SFX queue; SMB3 events use generated PCMs rendered from the source sound engine. The PCM player overlaps effects and mixes after the SMPS mixer. |
+| **mapping** | bump/kick/pipe/fire = QPlayer 02/08/10/20; coin/powerup/1up = QLevel1 01/20/40; crumble/boomerang = QLevel2 01/04; map-world/move/enter = QMap 01/02/04; course-clear/death = QMusic1 20/01. Sonic jump/ring/hurt/skid/roll/spindash/spring/spikes/monitor/shield/starpost use their existing Sonic IDs. |
+| **open** | Pipe entry and a few rare object events have no dedicated Mario PCM yet. Title/map Z80 music is still unported. |
+
 ## M7 campaign: metadata, all-world maps and area loading (closed for loading; gameplay partial)
 
 | | |

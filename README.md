@@ -55,9 +55,11 @@ card/map flow is not wired yet). Controls: arrows, **Z/X/C** or **Space** = A/B/
 .\target\release\sonic-bros-3.exe --level 1-1 --frames 30 --screenshot out.png
 ```
 
-Current limitations: **audio is not ported yet** (silent), there is no web/WASM Rust shell yet, and the title/card
-screens are still the K5 gap. The native game reads the legacy derived archive for now; the stock Sonic 2 + SMB3
-importer is the remaining asset workstream.
+Audio: the 68k SMPS path (SMB3 levels/map music + Sonic SFX) and Mario PCM effects are working. Regenerate the Mario
+effects with `dotnet run --project tools/Smb3Effects -- --rom smb3.nes --out web-data/effects`; the Z80 path used by
+Sonic-zone/title music is not ported yet. There is no Rust web/WASM shell yet, the card-game frontend is the remaining
+K5 gap, and the native game reads the legacy derived archive for now; the stock Sonic 2 + SMB3 importer is the
+remaining asset workstream.
 
 ## ROMs
 

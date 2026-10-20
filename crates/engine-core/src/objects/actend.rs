@@ -1,6 +1,7 @@
 //! End-of-act objects and the results screen: signpost, results, star post, giant ring (+flash), egg prison and
 //! game over. Display/animation state is written where the original writes it; only RAM behaviour is needed here.
 
+use crate::audio::sfx;
 use crate::collision::CollisionSets;
 use crate::objects::{
     delete_object, display_or_mark_gone, find_free_slot, move_and_fall, out_of_range,
@@ -27,6 +28,7 @@ const SIGNPOST_SPARKLES: [(i8, i8); 8] = [
 
 pub fn signpost(ram: &mut Ram, o: Obj) {
     if o.routine(ram) == 0 {
+        sfx::music(ram, 0x9A);
         if ram.u16(vars::TWO_PLAYER_MODE) != 0 {
             return;
         }
@@ -478,6 +480,7 @@ fn starpost_check(ram: &mut Ram, o: Obj) {
                 ball.set_word(ram, 0x36, 0x20);
                 ball.set_word(ram, 0x3E, o.address());
             }
+            sfx::sonic(ram, sfx::ids::CHECKPOINT);
             o.set_anim(ram, 1);
             starpost_save(ram, o);
             ram.w8(respawn_entry(o, ram), 0);

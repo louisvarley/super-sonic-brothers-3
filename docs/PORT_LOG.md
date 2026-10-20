@@ -565,7 +565,7 @@ Next: `platform-web` (WASM + canvas + ROM file picker), then audio, the stock im
 * Quirk found while matching the oracle: `SoundMixer`'s scale is the C# `float` product `0.8f * 0.48f`, not an f64 product; using f64 changed sample rounding after several seconds.
 
 ### Remaining
-* The Sonic-zone/title Z80 SMPS path is not ported. Gameplay SFX requests are also not yet routed to the 68k driver.
+* The Sonic-zone/title Z80 SMPS path is not ported. Gameplay SFX are wired in M6b.
 
 ## 2026-10-20 - Phase 2 M7: campaign metadata, all-world maps and area loading
 
@@ -603,6 +603,31 @@ Next: `platform-web` (WASM + canvas + ROM file picker), then audio, the stock im
 
 ### Remaining
 * K5-match card game still placeholder/ignored. Title audio is silent because the Z80 SMPS path is not ported.
+
+## 2026-10-20 - Phase 2 M6b: gameplay SFX (Sonic 68k + SMB3 PCM)
+
+* `engine-core::audio::effects` is an I/O-free overlapping PCM effect player; `engine-core::audio::sfx` gates Sonic 68k queue writes and SMB3 source queue bits on `$FFE5`, so audio-disabled traces keep their RAM.
+* `rom-assets::load_pcm_effects` loads `campaign/effects/*.pcm` (signed 16-bit LE, 48 kHz mono) into `AudioAssets`.
+* New `tools/smb3-effects` reuses `S2Port.Extraction`, runs SMB3's source sound engine and renders pulse/noise channels to PCM: bump, kick, pipe, fire, coin, powerup, 1up, crumble, boomerang, map-world, map-move, map-enter, course-clear, death.
+* Wired Sonic jump/ring/hurt/skid/roll/spindash/spring/spikes/monitor/shield/starpost; SMB3 bump/break, stomp/kick, coin, power-up, 1-up, fire, boomerang, goal course-clear, and map move/enter/world. Native mixes the effects; `--mute` still disables output.
+* `audio_sfx` verifies Sonic jump/ring/hurt and Mario coin/bump produce non-silent output; `audio_smoke` keeps the no-render-change check. Full workspace tests, fmt, strict clippy and release build pass.
+
+Remaining: pipe entry and a few rare object events have no dedicated Mario PCM yet; title/map Z80 music remains unported.
+
+## 2026-10-20 — Phase 2 M6b: gameplay SFX (verified)
+
+* Sonic SFX are wired at the legacy call sites: player jump/skid/roll/spindash; ring collection, hurt/kill and the
+  100/200-ring extra life; star-post checkpoint; EHZ shield/spring; signpost/end-level music. They go through the
+  exact 68k SMPS queue (`$F00B`), gated on `$FFE5` so audio-disabled golden traces are unchanged.
+* Mario PCM effects use a reserved secondary-queue range (`$80-$8F`): the SMB3 block bump/break, shell kick, coin,
+  power-up/1-up, fireball, boomerang, pipe, map move/enter/world and goal fanfare play through `EffectPlayer`.
+* `tools/Smb3Effects` runs SMB3's own sound engine offline and writes `web-data/effects/*.pcm` (derived, gitignored).
+  `rom-assets` merges those with the archive's `pipe`/`enter-level` effects.
+* `mario-crumble`/`mario-boomerang` use SMB3's noise channel, which the current pulse-only renderer does not capture;
+  they fall back to `mario-bump`/`mario-fire` until a noise renderer is added (documented in the tool README).
+* Tests: `audio_sfx` verifies Sonic jump/ring/hurt, `pipe`, and `mario-bump`/`mario-coin`/`mario-powerup` are
+  non-silent, and that SFX requests leave the motion/framebuffer unchanged. All existing tests stay green.
+* The blocked subagent had already written this wiring before the provider cut its reply; verified and kept.
 
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 

@@ -196,6 +196,12 @@ impl CampaignRunner {
         if matches!(self.flow.screen, ScreenState::Map(_)) && self.map_audio.is_none() {
             self.start_map_audio(self.flow.progress.world as u8);
         }
+        let effects = self.flow.take_map_sound_effects();
+        if let Some(audio) = self.map_audio.as_mut() {
+            for effect in effects {
+                audio.play_effect(effect);
+            }
+        }
         let result = match action {
             Some(MapAction::StartArea { act }) => self.start_area(act),
             Some(MapAction::StartZone { zone, act }) => self.start_zone(zone, act),

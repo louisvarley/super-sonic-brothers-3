@@ -4,6 +4,7 @@
 //! Objects are found through their `collision_flags` byte (`$20`): bits 6-7 select the response, bits 0-5 the
 //! hitbox size. Sound is a no-op here (M6).
 
+use crate::audio::sfx;
 use crate::objects::smb3;
 use crate::objects::{find_free_slot, ids, solid};
 use crate::player::{self, Player};
@@ -373,6 +374,14 @@ pub fn hurt(ram: &mut Ram, o: Obj, source: Obj) -> i32 {
     if o.invulnerable_time(ram) != 0 {
         return -1;
     }
+    sfx::sonic(
+        ram,
+        if source.id(ram) == SPIKES_ID {
+            sfx::ids::HURT_BY_SPIKES
+        } else {
+            sfx::ids::HURT
+        },
+    );
     let rings = ram.u16(vars::RING_COUNT);
     let loses_rings = o.address() == vars::MAIN_CHARACTER;
     if loses_rings && !o.has_shield(ram) {
@@ -423,7 +432,14 @@ pub fn kill(ram: &mut Ram, o: Obj, source: Obj) -> i32 {
     o.set_inertia(ram, 0);
     o.set_anim(ram, player::anim::DEATH);
     o.set_art_tile(ram, o.art_tile(ram) | 0x8000);
-    let _ = source.id(ram) == SPIKES_ID;
+    sfx::sonic(
+        ram,
+        if source.id(ram) == SPIKES_ID {
+            sfx::ids::HURT_BY_SPIKES
+        } else {
+            sfx::ids::HURT
+        },
+    );
     -1
 }
 
@@ -449,6 +465,7 @@ pub fn add_points(ram: &mut Ram, points: i32) {
             vars::UPDATE_HUD_LIVES,
             ram.u8(vars::UPDATE_HUD_LIVES).wrapping_add(1),
         );
+        sfx::music(ram, 0x98);
     }
 }
 
@@ -516,6 +533,15 @@ fn touch_rings(ram: &mut Ram, o: Obj) {
 
 /// `CollectRing` (0x14EC8) / Tails' copy (0x14F1E), which in 1-player mode also counts for Sonic.
 pub fn collect_ring_for(ram: &mut Ram, tails: bool) {
+    collect_ring_for_with(ram, tails, true);
+}
+
+/// Collects a ring without the Sonic ring SFX (SMB3's block coins play their own PCM instead).
+pub fn collect_ring_for_silent(ram: &mut Ram, tails: bool) {
+    collect_ring_for_with(ram, tails, false);
+}
+
+fn collect_ring_for_with(ram: &mut Ram, tails: bool, play_ring: bool) {
     if tails {
         if ram.u16(vars::RINGS_COLLECTED_P2) < MAX_RINGS {
             let v = ram.u16(vars::RINGS_COLLECTED_P2);
@@ -544,8 +570,12 @@ pub fn collect_ring_for(ram: &mut Ram, tails: bool) {
                     vars::UPDATE_HUD_LIVES,
                     ram.u8(vars::UPDATE_HUD_LIVES).wrapping_add(1),
                 );
+                sfx::music(ram, 0x98);
             }
         }
+    }
+    if play_ring {
+        sfx::sonic(ram, sfx::ids::RING);
     }
 }
 

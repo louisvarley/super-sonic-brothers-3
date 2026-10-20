@@ -4,6 +4,7 @@
 //! Behaviour follows SMB3's translated to Sonic rules (walking speeds, hops, plant timing). Sprite drawing is a
 //! later milestone; the mapping frames and the on-screen flag (which object code reads) are kept exact.
 
+use crate::audio::sfx;
 use crate::collision::{self, CollisionSets};
 use crate::objects::{
     display_or_mark_gone, find_free_slot, ids, move_and_fall, move_object, solid, sprites,
@@ -291,6 +292,7 @@ pub fn block(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), crate::p
             return Ok(());
         }
         o.set_byte(ram, 0x32, 8);
+        sfx::mario(ram, sfx::mario::BUMP);
         give(ram, o, player, tile);
     }
     display_or_mark_gone(ram, o);
@@ -337,7 +339,8 @@ fn give(ram: &mut Ram, o: Obj, player: Obj, tile: u8) {
 }
 
 fn ring_pop(ram: &mut Ram, o: Obj) {
-    crate::objects::touch::collect_ring_for(ram, false);
+    crate::objects::touch::collect_ring_for_silent(ram, false);
+    sfx::mario(ram, sfx::mario::COIN);
     if let Some(slot) = find_free_slot(ram) {
         slot.set_id(ram, crate::objects::common_ids::POINTS);
         slot.set_x(ram, o.x(ram));
@@ -347,6 +350,14 @@ fn ring_pop(ram: &mut Ram, o: Obj) {
 }
 
 fn contents(ram: &mut Ram, o: Obj, player: Obj, monitor_item: u8) {
+    sfx::mario(
+        ram,
+        if monitor_item == 1 {
+            sfx::mario::ONE_UP
+        } else {
+            sfx::mario::POWERUP
+        },
+    );
     if let Some(slot) = find_free_slot(ram) {
         slot.set_id(ram, 0x2E);
         slot.set_x(ram, o.x(ram));
@@ -357,6 +368,7 @@ fn contents(ram: &mut Ram, o: Obj, player: Obj, monitor_item: u8) {
 }
 
 fn break_block(ram: &mut Ram, o: Obj) {
+    sfx::mario(ram, sfx::mario::CRUMBLE);
     crate::objects::touch::add_points(ram, 5);
     let index = o.respawn_index(ram);
     if index != 0 {
@@ -605,6 +617,7 @@ fn to_shell(ram: &mut Ram, o: Obj) {
 }
 
 fn kick(ram: &mut Ram, o: Obj, sonic: Obj) {
+    sfx::mario(ram, sfx::mario::KICK);
     o.set_routine_secondary(ram, SLIDING);
     if sonic.x(ram) < o.x(ram) {
         o.set_status(ram, o.status(ram) | 1);
@@ -739,6 +752,7 @@ fn spit(ram: &mut Ram, o: Obj, sonic: Obj, direction: i32, height: i32) {
 pub fn fireball(ram: &mut Ram, o: Obj) {
     if o.routine(ram) == 0 {
         init(ram, o, 0xF08000, 0x6340, 4, 0x80 | 0x0B);
+        sfx::mario(ram, sfx::mario::FIRE);
     }
     move_object(ram, o);
     let t = tick(ram, o);
@@ -959,6 +973,7 @@ const BOOMERANG_DIRECTION: u16 = 0x32;
 pub fn boomerang(ram: &mut Ram, o: Obj) {
     if o.routine(ram) == 0 {
         init(ram, o, 0xF0D000, 0x6340, 4, 0x80 | 0x0B);
+        sfx::mario(ram, sfx::mario::BOOMERANG);
         o.set_word(
             ram,
             BOOMERANG_DIRECTION,
@@ -1038,6 +1053,7 @@ pub fn roulette_goal(ram: &mut Ram, o: Obj, goal_card: &mut Option<i32>) {
             let got_card_at = 0x60 - 1;
             let end_at = got_card_at + 150;
             if t == course_clear_at {
+                sfx::mario(ram, sfx::mario::COURSE_CLEAR);
                 goal_spawn_text(ram, 3, 104 - 4, 56 + 16);
             }
             if t == got_card_at {

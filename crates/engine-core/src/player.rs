@@ -6,6 +6,7 @@
 //! belong to later milestones are explicit no-ops: sprite display, dynamic PLC art, sound and ring/object touching.
 
 use crate::animation::PlayerAnimation;
+use crate::audio::sfx;
 use crate::collision::{self, CollisionSets};
 use crate::math;
 use crate::objects::{sprites, touch};
@@ -672,6 +673,7 @@ impl Player {
                 o.set_y_vel(ram, -0x280);
                 o.set_jumping(ram, 0);
                 o.set_roll_jumping(ram, false);
+                sfx::sonic(ram, sfx::ids::JUMP);
             }
             o.set_y_vel(ram, o.y_vel(ram).min(0x180));
         } else {
@@ -1030,6 +1032,7 @@ impl Player {
         let o = self.obj;
         o.set_anim(ram, anim::STOP);
         o.set_facing_left(ram, face_left);
+        sfx::sonic(ram, sfx::ids::SKIDDING);
         if o.air_left(ram) >= 0x0C {
             ram.w8(self.profile.dust.wrapping_add(0x24), 6);
             ram.w8(self.profile.dust.wrapping_add(0x1A), 0x15);
@@ -1139,6 +1142,7 @@ impl Player {
         o.set_x_radius(ram, 7);
         o.set_anim(ram, anim::ROLL);
         o.set_y(ram, o.y(ram).wrapping_add(self.profile.roll_shift as u16));
+        sfx::sonic(ram, sfx::ids::ROLL);
         if o.inertia(ram) == 0 {
             o.set_inertia(ram, 0x200);
         }
@@ -1175,6 +1179,7 @@ impl Player {
         o.set_pushing(ram, false);
         o.set_jumping(ram, 1);
         o.set_stick_to_convex(ram, 0);
+        sfx::sonic(ram, sfx::ids::JUMP);
         o.set_y_radius(ram, self.profile.stand_y_radius);
         o.set_x_radius(ram, 9);
         if o.rolling(ram) {
@@ -1202,6 +1207,7 @@ impl Player {
             o.set_anim(ram, anim::SPINDASH);
             o.set_spindash_flag(ram, 1);
             o.set_spindash_counter(ram, 0);
+            sfx::sonic(ram, sfx::ids::SPINDASH_REV);
             if o.air_left(ram) >= 0x0C {
                 ram.w8(self.profile.dust.wrapping_add(0x1C), 2);
             }
@@ -1228,6 +1234,7 @@ impl Player {
             }
             o.set_rolling(ram, true);
             ram.w8(self.profile.dust.wrapping_add(0x1C), 0);
+            sfx::sonic(ram, sfx::ids::SPINDASH_RELEASE);
         } else {
             // Charging (0x1EB00).
             if o.spindash_counter(ram) != 0 {
@@ -1237,6 +1244,7 @@ impl Player {
             }
             if (self.pressed(ram) & BUTTON_ABC as i32) != 0 {
                 o.set_anim(ram, anim::SPINDASH);
+                sfx::sonic(ram, sfx::ids::SPINDASH_REV);
                 o.set_prev_anim(ram, 0);
                 let c = o.spindash_counter(ram) as i32 + 0x200;
                 o.set_spindash_counter(ram, if c >= 0x800 { 0x800 } else { c as u16 });

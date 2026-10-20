@@ -494,6 +494,14 @@ impl Session {
         }
     }
 
+    /// Queues a generated PCM effect on the optional audio path.
+    pub fn play_effect(&mut self, name: &str) -> bool {
+        self.audio
+            .as_mut()
+            .map(|audio| audio.play_effect(name))
+            .unwrap_or(false)
+    }
+
     /// Renders one frame of 48 kHz stereo audio (800 frames) into `out` (interleaved L/R).
     pub fn render_audio(&mut self, out: &mut [i16], frames: usize) {
         if let Some(a) = self.audio.as_mut() {

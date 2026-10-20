@@ -3,11 +3,14 @@
 //! `rom-assets` loads the archive's player data into [`AudioAssets`]; [`Smps68kDriver`] is a routine-for-routine
 //! port of the hack's Sonic 1-style 68k driver, and [`SoundMixer`] renders its YM2612/PSG/DAC writes at 48 kHz.
 
+pub mod effects;
 pub mod mixer;
+pub mod sfx;
 pub mod smps68k;
 pub mod sn76489;
 pub mod ym2612;
 
+pub use effects::{EffectPlayer, PcmEffect};
 pub use mixer::{dac_sample_rate, SoundChips, SoundMixer, DEFAULT_OUTPUT_RATE};
 pub use smps68k::Smps68kDriver;
 pub use sn76489::Sn76489;
@@ -30,6 +33,7 @@ pub struct AudioAssets {
     pub dac_sample_pitches: Vec<i32>,
     /// When the act has an extra SMB3 song, the music id to play instead of the zone list's.
     pub extra_music: Option<u16>,
+    pub pcm_effects: Vec<PcmEffect>,
 }
 
 impl AudioAssets {
@@ -88,6 +92,7 @@ impl AudioAssets {
 pub struct AudioState {
     pub driver: Smps68kDriver,
     pub mixer: SoundMixer,
+    pub effects: EffectPlayer,
     pub music: u16,
 }
 
@@ -98,9 +103,11 @@ impl AudioState {
             assets.dac_sample_pitches.clone(),
             DEFAULT_OUTPUT_RATE,
         );
+        let effects = EffectPlayer::new(assets.pcm_effects.clone());
         Self {
             driver: Smps68kDriver::new(assets),
             mixer,
+            effects,
             music: 0,
         }
     }
@@ -127,10 +134,52 @@ impl AudioState {
 
     /// `World.UpdateSound`: the 68k driver's update in VBlank.
     pub fn update(&mut self, ram: &mut crate::Ram) {
+        // Mario PCM requests use the reserved secondary-queue range; consume them before the SMPS driver sees them.
+        let queued = ram.u8(crate::vars::SMPS_QUEUE2);
+        if let Some(name) = mario_effect_name(queued) {
+            if !self.effects.play(name) {
+                // `mario-crumble`/`mario-boomerang` use SMB3's noise channel, which the pulse-only renderer does not
+                // capture; fall back to the nearest Mario effect until the noise channel is rendered.
+                let fallback = match queued {
+                    crate::audio::sfx::mario::CRUMBLE => Some("mario-bump"),
+                    crate::audio::sfx::mario::BOOMERANG => Some("mario-fire"),
+                    _ => None,
+                };
+                if let Some(fallback) = fallback {
+                    self.effects.play(fallback);
+                }
+            }
+            ram.w8(crate::vars::SMPS_QUEUE2, 0);
+        }
         self.driver.update(ram, &mut self.mixer);
+    }
+
+    pub fn play_effect(&mut self, name: &str) -> bool {
+        self.effects.play(name)
     }
 
     pub fn render(&mut self, out: &mut [i16], frames: usize) {
         self.mixer.render(out, frames);
+        self.effects.mix(out, frames);
     }
+}
+
+/// `$80-$8F` in the secondary queue are PCM-effect requests, not SMPS SFX ids.
+fn mario_effect_name(queue: u8) -> Option<&'static str> {
+    Some(match queue {
+        crate::audio::sfx::mario::BUMP => "mario-bump",
+        crate::audio::sfx::mario::KICK => "mario-kick",
+        crate::audio::sfx::mario::COIN => "mario-coin",
+        crate::audio::sfx::mario::POWERUP => "mario-powerup",
+        crate::audio::sfx::mario::ONE_UP => "mario-1up",
+        crate::audio::sfx::mario::CRUMBLE => "mario-crumble",
+        crate::audio::sfx::mario::FIRE => "mario-fire",
+        crate::audio::sfx::mario::BOOMERANG => "mario-boomerang",
+        crate::audio::sfx::mario::PIPE => "pipe",
+        crate::audio::sfx::mario::MAP_MOVE => "map-move",
+        crate::audio::sfx::mario::MAP_ENTER => "enter-level",
+        crate::audio::sfx::mario::MAP_WORLD => "map-world",
+        crate::audio::sfx::mario::COURSE_CLEAR => "course-clear",
+        _ => return None,
+    })
 }
