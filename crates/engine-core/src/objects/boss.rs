@@ -1792,7 +1792,7 @@ fn fire_burn(ram: &mut Ram, o: Obj) {
     }
 }
 
-pub fn buzz_bomber(ram: &mut Ram, o: Obj) {
+pub fn buzz_bomber(ram: &mut Ram, o: Obj, animations: &[u8]) {
     if o.routine(ram) == 0 {
         o.set_routine(ram, 2);
         o.set_mappings(ram, 0x151C88);
@@ -1819,6 +1819,7 @@ pub fn buzz_bomber(ram: &mut Ram, o: Obj) {
             } else {
                 buzz_fly(ram, o);
             }
+            sprites::animate_object(ram, o, animations);
             display_or_mark_gone(ram, o);
         }
         4 => delete_object(ram, o),

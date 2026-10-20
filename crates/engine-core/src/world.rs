@@ -77,6 +77,10 @@ pub trait LevelSource {
     fn globals(&self) -> GlobalAssets {
         GlobalAssets::default()
     }
+    /// Software-VDP data: composed VRAM, PLC lists, animated tiles, sprites, HUD and plane geometry.
+    fn graphics(&self) -> crate::graphics::Graphics {
+        crate::graphics::Graphics::default()
+    }
 }
 
 pub struct World {

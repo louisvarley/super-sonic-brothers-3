@@ -525,7 +525,12 @@ pub fn waterfall(ram: &mut Ram, o: Obj) {
 
 // ------------------------------------------------------------------ Monitor ($26) and contents ($2E)
 
-pub fn monitor(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unported> {
+pub fn monitor(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    animations: &[u8],
+) -> Result<(), Unported> {
     match o.routine(ram) {
         0 => {
             o.set_routine(ram, 2);
@@ -550,11 +555,12 @@ pub fn monitor(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unport
                 o.subtype(ram)
             };
             o.set_anim(ram, anim);
-            monitor_update(ram, sets, o)?;
+            monitor_update(ram, sets, o, animations)?;
         }
-        2 => monitor_update(ram, sets, o)?,
+        2 => monitor_update(ram, sets, o, animations)?,
         4 => monitor_break(ram, o)?,
         6 => {
+            sprites::animate_object(ram, o, animations);
             sprites::display_sprite(ram, o);
         }
         8 => display_or_mark_gone(ram, o),
@@ -563,7 +569,12 @@ pub fn monitor(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unport
     Ok(())
 }
 
-fn monitor_update(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unported> {
+fn monitor_update(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    animations: &[u8],
+) -> Result<(), Unported> {
     if o.routine_secondary(ram) != 0 {
         move_and_fall(ram, o);
         let y = o.y(ram) as i32 + o.y_radius(ram) as i32;
@@ -612,6 +623,7 @@ fn monitor_update(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unp
             }
         }
     }
+    sprites::animate_object(ram, o, animations);
     display_or_mark_gone(ram, o);
     Ok(())
 }
@@ -650,11 +662,12 @@ fn monitor_break(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
     }
     ram.w8(crate::objects::respawn_entry(o, ram), 0);
     o.set_anim(ram, 0x0A);
+    o.set_mapping_frame(ram, 0x0B);
     sprites::display_sprite(ram, o);
     Ok(())
 }
 
-pub fn monitor_contents(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
+pub fn monitor_contents(ram: &mut Ram, o: Obj, frame_offsets: &[usize]) -> Result<(), Unported> {
     match o.routine(ram) {
         0 => {
             o.set_routine(ram, 2);
@@ -668,6 +681,9 @@ pub fn monitor_contents(ram: &mut Ram, o: Obj) -> Result<(), Unported> {
             }
             let frame = o.anim(ram).wrapping_add(1);
             o.set_mapping_frame(ram, frame);
+            if let Some(offset) = frame_offsets.get(frame as usize) {
+                o.set_mappings(ram, 0x15C7A + *offset as u32 + 2);
+            }
             contents_rise(ram, o)?;
             sprites::display_sprite(ram, o);
         }

@@ -440,6 +440,7 @@ impl Player {
         self.record_pos(ram);
         animation.animate(ram, o);
         self.load_dyn_plc(ram);
+        sprites::display_sprite(ram, o);
         Ok(())
     }
 
@@ -472,7 +473,10 @@ impl Player {
         if timer != 0 {
             o.set_invulnerable_time(ram, timer.wrapping_sub(1));
         }
-        // `(timer == 0 || ((timer >> 2) & 1) != 0)` displays the sprite; sprite building is M4+.
+        // `(timer == 0 || ((timer >> 2) & 1) != 0)` displays the sprite (it blinks while invulnerable).
+        if timer == 0 || ((timer >> 2) & 1) != 0 {
+            sprites::display_sprite(ram, o);
+        }
         if o.invincible(ram) && o.invincibility_time(ram) != 0 {
             let next = o.invincibility_time(ram).wrapping_sub(1);
             o.set_invincibility_time(ram, next);

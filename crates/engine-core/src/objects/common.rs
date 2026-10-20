@@ -221,7 +221,12 @@ fn init_explosion(ram: &mut Ram, o: Obj) {
 }
 
 /// `Animal` (0x14D5E): the animal freed by an explosion; a single rising hop.
-pub fn animal(ram: &mut Ram, o: Obj) {
+pub fn animal(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    data: Option<&crate::graphics::AnimalData>,
+) {
     if o.routine(ram) == 0 {
         if o.byte(ram, 0x38) != 0 {
             o.set_routine(ram, 0x1C);
@@ -233,13 +238,39 @@ pub fn animal(ram: &mut Ram, o: Obj) {
             }
             return;
         }
-        o.set_routine(ram, 2);
-        o.set_mappings(ram, 0x14C4A);
-        o.set_art_tile(ram, 0x84AC);
-        o.set_render_flags(ram, 0x04);
-        o.set_priority(ram, 1);
+        let pick = (crate::objects::boss::random_number(ram) & 1) as usize;
+        o.set_art_tile(ram, if pick == 0 { 0x580 } else { 0x594 });
+        let mut zone = ram.u8(vars::CURRENT_ZONE_AND_ACT) as usize;
+        if crate::camera::is_easter_egg(zone as u8) {
+            zone = 0x11;
+        }
+        let Some(data) = data else {
+            return;
+        };
+        let species = data.zone_types.get(zone * 2 + pick).copied().unwrap_or(0);
+        let Some(&(xv, yv, mappings)) = data.types.get(species as usize) else {
+            return;
+        };
+        o.set_byte(ram, 0x30, species);
+        o.set_word(ram, 0x32, xv as u16);
+        o.set_word(ram, 0x34, yv as u16);
+        o.set_mappings(ram, mappings);
+        o.set_y_radius(ram, 0x0C);
+        o.set_render_flags(ram, 0x05);
+        o.set_priority(ram, 6);
         o.set_width_pixels(ram, 8);
-        o.set_y_vel(ram, -0x300);
+        o.set_anim_frame_duration(ram, 7);
+        o.set_mapping_frame(ram, 2);
+        o.set_y_vel(ram, -0x400);
+        o.set_routine(ram, 2);
+        if let Some(points) = crate::objects::find_free_slot(ram) {
+            points.set_id(ram, crate::objects::common_ids::POINTS);
+            points.set_x(ram, o.x(ram));
+            points.set_y(ram, o.y(ram));
+            points.set_mapping_frame(ram, (o.word(ram, 0x3E) >> 1) as u8);
+        }
+        sprites::display_sprite(ram, o);
+        return;
     }
     if o.routine(ram) == 0x1C {
         if !o.on_screen(ram) {
@@ -251,18 +282,74 @@ pub fn animal(ram: &mut Ram, o: Obj) {
         if delay == 0 {
             o.set_routine(ram, 2);
             o.set_priority(ram, 1);
-            o.set_y_vel(ram, -0x300);
         }
         sprites::display_sprite(ram, o);
         return;
     }
-    if o.y_vel(ram) >= 0 {
-        delete_object(ram, o);
+    let species = o.byte(ram, 0x30);
+    if o.routine(ram) == 2 {
+        // Pop out of the explosion until it lands.
+        if !o.on_screen(ram) {
+            delete_object(ram, o);
+            return;
+        }
+        crate::objects::move_and_fall(ram, o);
+        if o.y_vel(ram) >= 0 {
+            let distance = animal_floor(ram, sets, o);
+            if distance < 0 {
+                o.set_y(ram, (o.y(ram) as i32 + distance) as u16);
+                o.set_x_vel(ram, o.word(ram, 0x32) as i16);
+                o.set_y_vel(ram, o.word(ram, 0x34) as i16);
+                o.set_mapping_frame(ram, 1);
+                o.set_routine(ram, species.wrapping_mul(2).wrapping_add(4));
+            }
+        }
+        sprites::display_sprite(ram, o);
         return;
     }
-    move_object(ram, o);
-    o.set_y_vel(ram, o.y_vel(ram).wrapping_add(0x18));
-    sprites::display_sprite(ram, o);
+    let flying = matches!(o.routine(ram), 6 | 0x0E | 0x12);
+    if flying {
+        crate::objects::move_object(ram, o);
+        o.set_y_vel(ram, o.y_vel(ram).wrapping_add(0x18));
+    } else {
+        crate::objects::move_and_fall(ram, o);
+    }
+    o.set_mapping_frame(ram, 1);
+    if o.y_vel(ram) >= 0 {
+        o.set_mapping_frame(ram, 0);
+        let distance = animal_floor(ram, sets, o);
+        if distance < 0 {
+            o.set_y(ram, (o.y(ram) as i32 + distance) as u16);
+            o.set_y_vel(ram, o.word(ram, 0x34) as i16);
+        }
+    }
+    if flying {
+        let d = o.anim_frame_duration(ram).wrapping_sub(1);
+        o.set_anim_frame_duration(ram, d);
+        if (d as i8) < 0 {
+            o.set_anim_frame_duration(ram, 1);
+            o.set_mapping_frame(ram, (o.mapping_frame(ram) + 1) & 1);
+        }
+    }
+    if !o.on_screen(ram) {
+        delete_object(ram, o);
+    } else {
+        sprites::display_sprite(ram, o);
+    }
+}
+
+fn animal_floor(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> i32 {
+    let y = o.y(ram) as i32 + o.y_radius(ram) as i32;
+    crate::collision::find_floor(
+        ram,
+        sets,
+        y,
+        o.x(ram) as i32,
+        0x10,
+        0x0C,
+        0,
+        vars::PRIMARY_ANGLE,
+    ) as i16 as i32
 }
 
 /// `Points` (0x14DD2): the 10-point popup a ring block leaves.

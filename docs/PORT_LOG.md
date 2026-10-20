@@ -474,6 +474,35 @@ The SMB3 goal traces must be generated with `--zone`/`--act` rather than `--leve
   golden-trace + 5 rom-assets — all pass.
 * `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
+## 2026-10-20 - Phase 2 M5a: software VDP and level framebuffer hashes (partial)
+
+### Implemented
+* `engine-core::vdp`: 320x224 CRAM-index frame, backdrop/BG-low/FG-low/BG-high/FG-high order, per-line H-scroll,
+  full-screen V-scroll, the SAT link walk with the 80/20/320 limits, flips, palette line, high-plane occlusion and
+  `to_rgba` in the C# `0xAABBGGRR` memory order (R, G, B, A bytes). `Session::render_hash` is SHA-256 over that
+  buffer, low 64 bits little-endian, matching `GoldenTrace`.
+* `background_plane` (initial + `LoadTilesAsYouMove`, including Marble's shared layers), `animated_tiles` (generic
+  scripts + MZ magma), `plc` (RAM queue counters + immediate art copy), `hud` (Base/Update digits, lives, bonus and
+  timer), `sprite_builder` (HUD, display lists, rings, static mappings, multi-sprite, on-screen flag).
+* `rom-assets`: composes the 64 KiB VRAM from level art + fromTitleScreen/onLoad/afterTitleCard PLCs + animated
+  frame 0; loads every `objects/*/sprites.json` mapping/DPLC/animation block, HUD digits, Sonic/Tails/rings, animal
+  tables and the SMB3/zone PLC lists.
+* `Session::step` order now matches `World.Step` + `LevelSession.StepPlaying`: players, object DPLC side effects,
+  objects, camera/background, rings, PLC, oscillation, palette, BuildSprites, VBlank/HUD/PLC, animated tiles and
+  plane B; `render()` copies CRAM and applies the MZ lava split.
+* Ported the rendering half of Tails' tails `$05`, dust `$08`, monitor `$26`/contents `$2E`, animal `$28`/points
+  `$29`, and the animations for Motobug, Chopper and Buzz Bomber.
+
+### Verification
+* `render_motion.rs` replays the six required levels with all four scripts (`idle/right/jump/spindash`) and compares
+  `{ram:false, regions:false, screen:true, tails:false}` every 30 ticks.
+* **15/24 traces match all 600 ticks (240/240 screen hashes).** Nine traces have a first divergence at the ticks in
+  K4; the remaining mismatches are unported effect/object sprite animation, not plane/palette/HUD disagreement.
+* Existing suite excluding the new gate: `cargo test --workspace -- --skip
+  level_framebuffer_hashes_match_the_legacy_traces` = all pass. `cargo fmt --all` and `cargo clippy --workspace
+  --all-targets -- -D warnings` clean.
+* The new render gate intentionally still fails (assertion unchanged) until K4 is closed.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:

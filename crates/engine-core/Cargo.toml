@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+sha2 = "0.10"
 
 [dev-dependencies]
 golden-trace = { path = "../golden-trace" }

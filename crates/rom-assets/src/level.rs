@@ -6,6 +6,10 @@
 use crate::archive::{change_extension, resolve, Archive};
 use crate::{png, tiles};
 use engine_core::assets::{BridgeData, GlobalAssets, PaletteCycle, SpiralData, SpringSlopes};
+use engine_core::graphics::{
+    AnimatedScript, Graphics, HudData, MappingPiece, PlcEntry, PlcList, RenderGeometry, SpriteBank,
+    SpriteData,
+};
 use engine_core::oscillation::OscillationData;
 pub use engine_core::world::{Bounds, Start};
 use engine_core::{vars, Ram};
@@ -59,6 +63,8 @@ pub struct LevelData {
     pub music_file: Option<String>,
     /// Data shared by every act (oscillation, bridge, ripple table, palette cycle).
     pub globals: GlobalAssets,
+    /// Software-VDP graphics data.
+    pub graphics: Graphics,
 }
 
 impl LevelData {
@@ -291,6 +297,14 @@ impl LevelData {
             });
         }
 
+        let mut graphics = load_graphics(archive, &dir, &level, &art)?;
+        graphics.geometry = RenderGeometry {
+            foreground: foreground.clone(),
+            background: background.clone(),
+            chunks: chunk_words.clone(),
+            blocks: block_words.clone(),
+        };
+
         Ok(Self {
             art,
             block_words,
@@ -309,6 +323,7 @@ impl LevelData {
             gameplay,
             music_file,
             globals,
+            graphics,
         })
     }
 
@@ -425,6 +440,10 @@ impl engine_core::world::LevelSource for LevelData {
     fn globals(&self) -> GlobalAssets {
         self.globals.clone()
     }
+
+    fn graphics(&self) -> Graphics {
+        self.graphics.clone()
+    }
 }
 
 fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -508,4 +527,279 @@ fn i8_array(v: &Value) -> Result<Vec<i8>, String> {
                 .ok_or_else(|| "expected a signed byte value".to_string())
         })
         .collect()
+}
+
+fn load_graphics(
+    archive: &Archive,
+    dir: &str,
+    level: &Value,
+    art: &[u8],
+) -> Result<Graphics, String> {
+    let mut graphics = Graphics {
+        vram: vec![0u8; 0x10000],
+        ..Graphics::default()
+    };
+    // The level art always forms tiles 0.., whether or not the act has a PLC list.
+    let n = art.len().min(0x10000);
+    graphics.vram[..n].copy_from_slice(&art[..n]);
+
+    if let Some(plcs) = level["plcs"].as_object() {
+        let lists_ref = plcs
+            .get("lists")
+            .and_then(Value::as_str)
+            .ok_or("plcs.lists missing")?;
+        let lists_path = resolve(dir, lists_ref);
+        graphics.plc_lists = load_plc_lists(archive, &lists_path)?;
+        let mut ids = Vec::new();
+        for key in ["fromTitleScreen", "onLoad", "afterTitleCard"] {
+            if let Some(a) = plcs.get(key).and_then(Value::as_array) {
+                ids.extend(a.iter().filter_map(|v| v.as_u64().map(|n| n as usize)));
+            }
+        }
+        for id in ids {
+            apply_plc(&mut graphics.vram, &graphics.plc_lists, id);
+        }
+    }
+
+    if let Some(ani_ref) = level["animatedTiles"].as_str() {
+        let ani_path = resolve(dir, ani_ref);
+        let ani_dir = ani_path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let ani = archive.read_json(&ani_path)?;
+        if let Some(mg) = ani["magma"].as_object() {
+            if let Some(art_path) = mg.get("art").and_then(Value::as_str) {
+                let bytes = archive.read(&resolve(ani_dir, art_path))?;
+                graphics.magma_art = bytes.to_vec();
+                graphics.magma_vram_tile =
+                    mg.get("vramTile").and_then(Value::as_u64).unwrap_or(0) as usize;
+            }
+        }
+        if let Some(scripts) = ani["scripts"].as_array() {
+            for sc in scripts {
+                let art_path = sc["art"].as_str().ok_or("animated script art missing")?;
+                let tiles = sc["artTiles"].as_u64().unwrap_or(0) as usize;
+                let script_art = load_tile_art(archive, &resolve(ani_dir, art_path), tiles)?;
+                graphics.animated.push(AnimatedScript {
+                    art: script_art,
+                    vram_tile: sc["vramTile"].as_u64().unwrap_or(0) as usize,
+                    tiles_per_frame: sc["tilesPerFrame"].as_u64().unwrap_or(0) as usize,
+                    frames: sc["frames"]
+                        .as_array()
+                        .map(|fs| {
+                            fs.iter()
+                                .map(|f| {
+                                    (
+                                        f.get(0).and_then(Value::as_u64).unwrap_or(0) as usize,
+                                        f.get(1).and_then(Value::as_u64).unwrap_or(0) as u8,
+                                    )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                });
+            }
+        }
+    }
+    for script in &graphics.animated {
+        if let Some((offset, _)) = script.frames.first() {
+            let src = offset * 32;
+            let dst = script.vram_tile * 32;
+            let count = script.tiles_per_frame * 32;
+            if src + count <= script.art.len() && dst + count <= graphics.vram.len() {
+                graphics.vram[dst..dst + count].copy_from_slice(&script.art[src..src + count]);
+            }
+        }
+    }
+
+    graphics.hud = load_hud(archive)?;
+    graphics.sonic = load_sprite_file(archive, "objects/sonic/sprites.json")?;
+    graphics.tails = load_sprite_file(archive, "objects/tails/sprites.json")?;
+    graphics.rings = load_sprite_file(archive, "objects/rings/sprites.json")?;
+    let animals = archive.read_json("objects/animal/animals.json")?;
+    graphics.animals = engine_core::graphics::AnimalData {
+        zone_types: animals["zoneTypes"]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect())
+            .unwrap_or_default(),
+        types: animals["types"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|t| {
+                        (
+                            t.get(0).and_then(Value::as_i64).unwrap_or(0) as i16,
+                            t.get(1).and_then(Value::as_i64).unwrap_or(0) as i16,
+                            t.get(2).and_then(Value::as_i64).unwrap_or(0) as u32,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+
+    let mut bank = SpriteBank::default();
+    let names: Vec<String> = archive
+        .names()
+        .filter(|n| n.starts_with("objects/") && n.ends_with("/sprites.json"))
+        .map(ToOwned::to_owned)
+        .collect();
+    for name in names {
+        if let Ok(data) = load_sprite_file(archive, &name) {
+            if data.rom_pointer != 0 {
+                bank.add(data);
+            }
+        }
+    }
+    graphics.bank = bank;
+    let _ = level;
+    Ok(graphics)
+}
+
+fn load_plc_lists(archive: &Archive, path: &str) -> Result<Vec<PlcList>, String> {
+    let root = archive.read_json(path)?;
+    let lists = root["lists"].as_array().ok_or("PLC lists missing")?;
+    let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let mut out = Vec::with_capacity(lists.len());
+    for list in lists {
+        let mut entries = Vec::new();
+        for e in list["entries"].as_array().into_iter().flatten() {
+            let art_path = e["art"].as_str().unwrap_or("");
+            let tiles = e["tiles"].as_u64().unwrap_or(0) as usize;
+            let art = load_tile_art(archive, &resolve(dir, art_path), tiles)?;
+            let stem = art_path
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .split('.')
+                .next()
+                .unwrap_or("");
+            let address = if let Some(hex) = stem.strip_prefix("nem_") {
+                u32::from_str_radix(hex, 16).unwrap_or(0xF00000)
+            } else {
+                0xF00000
+            };
+            entries.push(PlcEntry {
+                art,
+                tiles,
+                vram_tile: e["vramTile"].as_u64().unwrap_or(0) as usize,
+                address,
+            });
+        }
+        out.push(PlcList { entries });
+    }
+    Ok(out)
+}
+
+fn apply_plc(vram: &mut [u8], lists: &[PlcList], id: usize) {
+    let Some(list) = lists.get(id) else {
+        return;
+    };
+    for entry in &list.entries {
+        let dst = entry.vram_tile * 32;
+        let count = entry.art.len().min(vram.len().saturating_sub(dst));
+        if count > 0 {
+            vram[dst..dst + count].copy_from_slice(&entry.art[..count]);
+        }
+    }
+}
+
+fn load_tile_art(archive: &Archive, path: &str, tiles: usize) -> Result<Vec<u8>, String> {
+    let (width, _, pixels) = crate::png::read_indexed(archive.read(path)?)?;
+    Ok(crate::tiles::from_sheet(&pixels, width as usize, tiles))
+}
+
+fn load_sprite_file(archive: &Archive, path: &str) -> Result<SpriteData, String> {
+    let root = archive.read_json(path)?;
+    let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let frames = root["mappings"]
+        .as_array()
+        .ok_or("mappings missing")?
+        .iter()
+        .map(|frame| {
+            frame
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|p| {
+                    let a = p.as_array();
+                    let get = |i: usize| a.and_then(|a| a.get(i));
+                    MappingPiece {
+                        y: get(0).and_then(Value::as_i64).unwrap_or(0) as i16,
+                        size: get(1).and_then(Value::as_u64).unwrap_or(0) as u8,
+                        pattern: get(2).and_then(Value::as_u64).unwrap_or(0) as u16,
+                        x: get(3).and_then(Value::as_i64).unwrap_or(0) as i16,
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let dplc = root["dplc"].as_array().map(|frames| {
+        frames
+            .iter()
+            .map(|f| {
+                f.as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|p| {
+                        (
+                            p.get(0).and_then(Value::as_u64).unwrap_or(0) as usize,
+                            p.get(1).and_then(Value::as_u64).unwrap_or(0) as usize,
+                        )
+                    })
+                    .collect()
+            })
+            .collect()
+    });
+    let mut art = Vec::new();
+    if let Some(art_name) = root["art"].as_str() {
+        let tiles = root["artTiles"].as_u64().unwrap_or(0) as usize;
+        if tiles > 0 {
+            art = load_tile_art(archive, &resolve(dir, art_name), tiles)?;
+        } else {
+            art = archive.read(&resolve(dir, art_name))?.to_vec();
+        }
+    }
+    Ok(SpriteData {
+        frames,
+        dplc,
+        art,
+        rom_pointer: root["romPointer"].as_u64().unwrap_or(0) as u32,
+        frame_offsets: root["frameOffsets"]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect()),
+        animations: root["animations"]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect())
+            .unwrap_or_default(),
+    })
+}
+
+fn load_hud(archive: &Archive) -> Result<HudData, String> {
+    let root = archive.read_json("objects/hud/hud.json")?;
+    let dir = "objects/hud";
+    let digits = load_tile_art(
+        archive,
+        &resolve(dir, root["digits"].as_str().unwrap_or("digits.png")),
+        root["digitTiles"].as_u64().unwrap_or(24) as usize,
+    )?;
+    let lives_digits = load_tile_art(
+        archive,
+        &resolve(
+            dir,
+            root["livesDigits"].as_str().unwrap_or("lives-digits.png"),
+        ),
+        root["livesDigitTiles"].as_u64().unwrap_or(10) as usize,
+    )?;
+    let u8s = |key: &str| {
+        root[key]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as u8).collect())
+            .unwrap_or_default()
+    };
+    Ok(HudData {
+        digits,
+        lives_digits,
+        base_tiles: u8s("baseTiles"),
+        init_rings_tiles: u8s("initRingsTiles"),
+        sprites: load_sprite_file(archive, "objects/hud/sprites.json")?,
+    })
 }

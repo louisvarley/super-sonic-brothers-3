@@ -525,7 +525,12 @@ fn object_floor_at(ram: &mut Ram, sets: &CollisionSets, o: Obj, x: i32) -> i32 {
     find_floor(ram, sets, y, x, 0x10, 0x0C, 0, vars::PRIMARY_ANGLE) as i16 as i32
 }
 
-pub fn motobug(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unported> {
+pub fn motobug(
+    ram: &mut Ram,
+    sets: &CollisionSets,
+    o: Obj,
+    animations: &[u8],
+) -> Result<(), Unported> {
     match o.routine(ram) {
         0 => {
             o.set_mappings(ram, 0x151A58);
@@ -535,6 +540,7 @@ pub fn motobug(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unport
             o.set_width_pixels(ram, 0x14);
             if o.anim(ram) != 0 {
                 o.set_routine(ram, 4);
+                sprites::animate_object(ram, o, animations);
                 sprites::display_sprite(ram, o);
                 return Ok(());
             }
@@ -557,10 +563,12 @@ pub fn motobug(ram: &mut Ram, sets: &CollisionSets, o: Obj) -> Result<(), Unport
             } else {
                 motobug_drive(ram, sets, o);
             }
+            sprites::animate_object(ram, o, animations);
             display_or_mark_gone(ram, o);
         }
         4 => {
-            // Exhaust animation ends by deleting the object in the original.
+            // The exhaust animation ends by advancing to Gone.
+            sprites::animate_object(ram, o, animations);
             display_or_mark_gone(ram, o);
         }
         6 => delete_object(ram, o),
@@ -610,7 +618,7 @@ fn motobug_drive(ram: &mut Ram, sets: &CollisionSets, o: Obj) {
 
 // ------------------------------------------------------------------ Chopper ($2B)
 
-pub fn chopper(ram: &mut Ram, o: Obj) {
+pub fn chopper(ram: &mut Ram, o: Obj, animations: &[u8]) {
     if o.routine(ram) == 0 {
         o.set_routine(ram, 2);
         o.set_mappings(ram, 0x152314);
@@ -629,6 +637,11 @@ pub fn chopper(ram: &mut Ram, o: Obj) {
         o.set_y(ram, start_y);
         o.set_y_vel(ram, -0x700);
     }
+    o.set_anim(ram, 1);
+    if start_y.wrapping_sub(0xC0) < o.y(ram) {
+        o.set_anim(ram, if o.y_vel(ram) >= 0 { 2 } else { 0 });
+    }
+    sprites::animate_object(ram, o, animations);
     display_or_mark_gone(ram, o);
 }
 

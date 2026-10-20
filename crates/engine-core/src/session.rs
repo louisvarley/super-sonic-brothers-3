@@ -9,13 +9,16 @@
 //! previous RAM in the same tick, keeping lives/score and the level-start variables.
 
 use crate::animation::{SonicAnimation, TailsAnimation};
+use crate::background_plane::BackgroundPlane;
 use crate::camera::Camera;
 use crate::collision::CollisionSets;
-use crate::objects::sprites;
+use crate::graphics::Graphics;
 use crate::player::Unported;
+use crate::plc::PlcQueue;
 use crate::rings::sync_animations;
+use crate::vdp::Vdp;
 use crate::world::{LevelSource, World};
-use crate::{vars, Ram};
+use crate::{vars, Obj, Ram};
 
 pub struct Session {
     level: Box<dyn LevelSource>,
@@ -28,6 +31,15 @@ pub struct Session {
     camera: Camera,
     pub camera_x: i32,
     pub camera_y: i32,
+    /// Graphics data and the mutable VRAM image used by the software VDP.
+    graphics: Graphics,
+    vram: Vec<u8>,
+    background: BackgroundPlane,
+    plc: PlcQueue,
+    sonic_dplc: u8,
+    tails_dplc: u8,
+    tails_tails_dplc: u8,
+    pub vdp: Vdp,
     /// Frames stepped (the trace's `tick` before the current call).
     pub ticks: u32,
     /// The legacy `LevelSession.Stopped`: an unported path aborted the frame; later frames do nothing.
@@ -66,6 +78,30 @@ impl Session {
         debug_start: Option<crate::world::Start>,
     ) -> Result<Self, Unported> {
         let world = World::new_at(level.as_ref(), zone, act, None, debug_start)?;
+        let graphics = level.graphics();
+        let mut world = world;
+        world.objects.tails_animation = Some(tails_animation.clone());
+        world.objects.dust_sprites = graphics.bank.table(0x21DDE).cloned();
+        if let Some(d) = graphics.bank.table(0x15C7A) {
+            world.objects.monitor_animations = d.animations.clone();
+            world.objects.monitor_frame_offsets = d.frame_offsets.clone().unwrap_or_default();
+        }
+        if let Some(d) = graphics.bank.table(0x151A58) {
+            world.objects.motobug_animations = d.animations.clone();
+        }
+        if let Some(d) = graphics.bank.table(0x152314) {
+            world.objects.chopper_animations = d.animations.clone();
+        }
+        world.objects.animal_data = Some(graphics.animals.clone());
+        if let Some(d) = graphics.bank.table(0x151C88) {
+            world.objects.buzz_animations = d.animations.clone();
+        }
+        let mut vram = graphics.vram.clone();
+        vram.resize(0x10000, 0);
+        let mut background = BackgroundPlane::new();
+        background.draw_initial(&world.ram, &graphics.geometry);
+        crate::hud::base(&mut world.ram, &mut vram, &graphics.hud);
+        let plc = PlcQueue::new(&graphics.plc_lists);
         let camera_x = world.camera_x();
         let camera_y = world.camera_y();
         Ok(Self {
@@ -79,6 +115,14 @@ impl Session {
             camera: Camera,
             camera_x,
             camera_y,
+            graphics,
+            vram,
+            background,
+            plc,
+            sonic_dplc: 0xFF,
+            tails_dplc: 0xFF,
+            tails_tails_dplc: 0xFF,
+            vdp: Vdp::new(),
             ticks: 0,
             stopped: None,
         })
@@ -135,9 +179,12 @@ impl Session {
                 water,
             )?;
         }
+        self.update_player_vram();
         self.world
             .objects
             .run_after_players(&mut self.world.ram, &self.sets, dying)?;
+        self.update_tails_tails_vram();
+        self.update_dust_vram();
 
         if self.world.ram.u16(vars::LEVEL_INACTIVE_FLAG) != 0 {
             // 0x51C4: the Act is rebuilt straight away when title cards are off.
@@ -147,25 +194,40 @@ impl Session {
 
         self.camera
             .deform_bg_layer(&mut self.world.ram, &self.world.globals.wave_table)?;
-        // StreamGiantRingArt, Plc.Run and SignpostArtLoad are later milestones; oscillation and the palette
-        // cycle keep their original place in the frame.
         self.world.rings.run(&mut self.world.ram);
+        self.plc.run(&mut self.world.ram);
         self.world.oscillation.step(&mut self.world.ram);
         palette_cycle(
             &mut self.world.ram,
             self.world.globals.palette_cycle.as_ref(),
         );
         sync_animations(&mut self.world.ram);
-        sprites::build_sprites(&mut self.world.ram);
+        crate::sprite_builder::build_sprites(
+            &mut self.world.ram,
+            &self.graphics.bank,
+            &self.graphics.hud,
+            &self.graphics.rings,
+        )?;
         self.world.object_manager.run(&mut self.world.ram);
 
-        // VBlank: Vint_runcount, then the HUD (0x81E).
+        // VBlank: Vint_runcount, then the HUD (0x81E), then ProcessDPLC.
         let vint = self.world.ram.u32(vars::VINT_RUNCOUNT);
         self.world
             .ram
             .w32(vars::VINT_RUNCOUNT, vint.wrapping_add(1));
-        Self::hud_timer(&mut self.world.ram)?;
-        // Plc.Process and UpdateSound are no-ops.
+        crate::hud::update(&mut self.world.ram, &mut self.vram, &self.graphics.hud)?;
+        self.plc.process(&mut self.world.ram);
+
+        // LevelSession.StepPlaying: animated tiles and LoadTilesAsYouMove after World.Step.
+        crate::animated_tiles::AnimatedTiles::step(
+            &mut self.world.ram,
+            &self.graphics.animated,
+            &self.graphics.magma_art,
+            self.graphics.magma_vram_tile,
+            &mut self.vram,
+        );
+        self.background
+            .update(&mut self.world.ram, &self.graphics.geometry);
 
         self.camera_x = self.world.camera_x();
         self.camera_y = self.world.camera_y();
@@ -182,33 +244,172 @@ impl Session {
             .wrapping_add(1);
         let previous = std::mem::take(&mut self.world.ram);
         self.world = World::new(self.level.as_ref(), self.zone, self.act, Some(previous))?;
+        self.world.objects.tails_animation = Some(self.tails_animation.clone());
+        self.world.objects.dust_sprites = self.graphics.bank.table(0x21DDE).cloned();
+        if let Some(d) = self.graphics.bank.table(0x15C7A) {
+            self.world.objects.monitor_animations = d.animations.clone();
+            self.world.objects.monitor_frame_offsets = d.frame_offsets.clone().unwrap_or_default();
+        }
+        if let Some(d) = self.graphics.bank.table(0x151A58) {
+            self.world.objects.motobug_animations = d.animations.clone();
+        }
+        if let Some(d) = self.graphics.bank.table(0x152314) {
+            self.world.objects.chopper_animations = d.animations.clone();
+        }
+        self.world.objects.animal_data = Some(self.graphics.animals.clone());
+        if let Some(d) = self.graphics.bank.table(0x151C88) {
+            self.world.objects.buzz_animations = d.animations.clone();
+        }
+        self.reset_graphics();
         self.camera_x = self.world.camera_x();
         self.camera_y = self.world.camera_y();
         Ok(())
     }
 
-    /// `HudUpdate` (0x4531E)'s RAM side: the redraw flags and the level timer. The digit writes go to VRAM and are
-    /// not part of this milestone.
-    fn hud_timer(ram: &mut Ram) -> Result<(), Unported> {
-        if ram.u16(vars::TWO_PLAYER_MODE) != 0 {
-            return Err(Unported::new(0x4551E, "2-player HUD"));
+    fn reset_graphics(&mut self) {
+        self.vram.clear();
+        self.vram.extend_from_slice(&self.graphics.vram);
+        self.vram.resize(0x10000, 0);
+        self.background = BackgroundPlane::new();
+        self.background
+            .draw_initial(&self.world.ram, &self.graphics.geometry);
+        crate::hud::base(&mut self.world.ram, &mut self.vram, &self.graphics.hud);
+        self.sonic_dplc = 0xFF;
+        self.tails_dplc = 0xFF;
+        self.tails_tails_dplc = 0xFF;
+    }
+
+    /// LoadSonicDynPLC / LoadTailsDynPLC: copy the current mapping frame's tiles into VRAM.
+    fn update_player_vram(&mut self) {
+        let sonic = self.world.sonic.obj;
+        let frame = sonic.mapping_frame(&self.world.ram);
+        if frame != self.sonic_dplc {
+            self.sonic_dplc = frame;
+            self.world.ram.w8(vars::SONIC_LAST_LOADED_DPLC, frame);
+            if let Some(dplc) = self.graphics.sonic.dplc.as_ref() {
+                if let Some(entries) = dplc.get(frame as usize) {
+                    let mut dest = 0xF000usize;
+                    for &(first, count) in entries {
+                        let src = first * 32;
+                        let n = (count * 32).min(self.graphics.sonic.art.len().saturating_sub(src));
+                        if dest + n <= self.vram.len() {
+                            self.vram[dest..dest + n]
+                                .copy_from_slice(&self.graphics.sonic.art[src..src + n]);
+                        }
+                        dest += count * 32;
+                    }
+                }
+            }
         }
-        if ram.u16(vars::DEBUG_MODE_FLAG) != 0 {
-            return Err(Unported::new(0x45468, "debug-mode HUD"));
+        let tails = self.world.tails.obj;
+        let frame = tails.mapping_frame(&self.world.ram);
+        if frame != self.tails_dplc {
+            self.tails_dplc = frame;
+            self.world.ram.w8(vars::TAILS_LAST_LOADED_DPLC, frame);
+            if let Some(dplc) = self.graphics.tails.dplc.as_ref() {
+                if let Some(entries) = dplc.get(frame as usize) {
+                    let mut dest = 0xF400usize;
+                    for &(first, count) in entries {
+                        let src = first * 32;
+                        let n = (count * 32).min(self.graphics.tails.art.len().saturating_sub(src));
+                        if dest + n <= self.vram.len() {
+                            self.vram[dest..dest + n]
+                                .copy_from_slice(&self.graphics.tails.art[src..src + n]);
+                        }
+                        dest += count * 32;
+                    }
+                }
+            }
         }
-        if ram.u8(vars::UPDATE_HUD_SCORE) != 0 {
-            ram.w8(vars::UPDATE_HUD_SCORE, 0);
+    }
+
+    fn update_dust_vram(&mut self) {
+        for address in [vars::SONIC_DUST, vars::TAILS_DUST] {
+            let o = Obj::new(address);
+            if o.id(&self.world.ram) != 8 {
+                continue;
+            }
+            let frame = o.mapping_frame(&self.world.ram);
+            if frame == o.byte(&self.world.ram, 0x30) {
+                continue;
+            }
+            o.set_byte(&mut self.world.ram, 0x30, frame);
+            let Some(data) = self.graphics.bank.table(o.mappings(&self.world.ram)) else {
+                continue;
+            };
+            let Some(dplc) = data.dplc.as_ref().and_then(|d| d.get(frame as usize)) else {
+                continue;
+            };
+            let mut dest = o.word(&self.world.ram, 0x3C) as usize;
+            for &(first, count) in dplc {
+                let src = first * 32;
+                let n = (count * 32).min(data.art.len().saturating_sub(src));
+                if dest + n <= self.vram.len() {
+                    self.vram[dest..dest + n].copy_from_slice(&data.art[src..src + n]);
+                }
+                dest += count * 32;
+            }
         }
-        if ram.u8(vars::UPDATE_HUD_RINGS) != 0 {
-            ram.w8(vars::UPDATE_HUD_RINGS, 0);
+    }
+
+    fn update_tails_tails_vram(&mut self) {
+        let o = Obj::new(vars::TAILS_TAILS);
+        if o.id(&self.world.ram) != 5 {
+            return;
         }
-        if ram.u8(vars::UPDATE_HUD_TIMER) != 0 && ram.u16(vars::GAME_PAUSED) == 0 {
-            advance_timer(ram)?;
+        let frame = o.mapping_frame(&self.world.ram);
+        if frame == self.tails_tails_dplc {
+            return;
         }
-        if ram.u8(vars::UPDATE_HUD_LIVES) != 0 {
-            ram.w8(vars::UPDATE_HUD_LIVES, 0);
+        self.tails_tails_dplc = frame;
+        if let Some(dplc) = self.graphics.tails.dplc.as_ref() {
+            if let Some(entries) = dplc.get(frame as usize) {
+                let mut dest = 0xF600usize;
+                for &(first, count) in entries {
+                    let src = first * 32;
+                    let n = (count * 32).min(self.graphics.tails.art.len().saturating_sub(src));
+                    if dest + n <= self.vram.len() {
+                        self.vram[dest..dest + n]
+                            .copy_from_slice(&self.graphics.tails.art[src..src + n]);
+                    }
+                    dest += count * 32;
+                }
+            }
         }
-        Ok(())
+    }
+
+    /// The mutable VRAM image (diagnostics/tests).
+    pub fn vram(&self) -> &[u8] {
+        &self.vram
+    }
+
+    pub fn render(&mut self) -> Vec<u8> {
+        for i in 0..64u16 {
+            self.vdp.cram[i as usize] = self.world.ram.u16(vars::NORMAL_PALETTE + i * 2);
+        }
+        if let Some((line, below)) = crate::lava_line::split(&self.world.ram, &self.vdp.cram) {
+            self.vdp.split_line = line as i32;
+            self.vdp.cram_below = below;
+        } else {
+            self.vdp.split_line = -1;
+            self.vdp.cram_below = self.vdp.cram;
+        }
+        self.vdp.render_level(
+            &self.graphics,
+            &self.vram,
+            &self.background.cells,
+            &self.world.ram,
+            true,
+        );
+        self.vdp.to_rgba()
+    }
+
+    /// The trace's `screenHash`: low 64 bits of SHA-256 over the RGBA bytes.
+    pub fn render_hash(&mut self) -> u64 {
+        use sha2::{Digest, Sha256};
+        let rgba = self.render();
+        let digest = Sha256::digest(&rgba);
+        u64::from_le_bytes(digest[..8].try_into().expect("digest length"))
     }
 }
 
@@ -234,52 +435,6 @@ fn palette_cycle(ram: &mut Ram, cycle: Option<&crate::assets::PaletteCycle>) {
             *value,
         );
     }
-}
-
-/// `AdvanceTimer` (0x4538E): increments minute/second/frame counts.
-fn advance_timer(ram: &mut Ram) -> Result<(), Unported> {
-    if ram.u8(vars::TIMED_MODE) == 0 {
-        if ram.u32(vars::TIMER) == 0x0009_3B3B {
-            return Err(Unported::new(0x45452, "time over (KillCharacter)"));
-        }
-        let frame = ram.u8(vars::TIMER_FRAME).wrapping_add(1);
-        ram.w8(vars::TIMER_FRAME, frame);
-        if frame < 60 {
-            return Ok(());
-        }
-        ram.w8(vars::TIMER_FRAME, 0);
-        let second = ram.u8(vars::TIMER_SECOND).wrapping_add(1);
-        ram.w8(vars::TIMER_SECOND, second);
-        if second < 60 {
-            return Ok(());
-        }
-        ram.w8(vars::TIMER_SECOND, 0);
-        let minute = ram.u8(vars::TIMER_MINUTE).wrapping_add(1);
-        ram.w8(vars::TIMER_MINUTE, if minute >= 9 { 9 } else { minute });
-        return Ok(());
-    }
-    // Count-down mode (a hack addition): 0x453B8.
-    if ram.u32(vars::TIMER) == 0x0000_003B {
-        return Err(Unported::new(0x45452, "time over (KillCharacter)"));
-    }
-    let frame = ram.u8(vars::TIMER_FRAME).wrapping_sub(1);
-    ram.w8(vars::TIMER_FRAME, frame);
-    if (frame as i8) >= 0 {
-        return Ok(());
-    }
-    ram.w8(vars::TIMER_FRAME, 0x3B);
-    let second = ram.u8(vars::TIMER_SECOND).wrapping_sub(1);
-    ram.w8(vars::TIMER_SECOND, second);
-    if (second as i8) >= 0 {
-        return Ok(());
-    }
-    ram.w8(vars::TIMER_SECOND, 0x3B);
-    let minute = ram.u8(vars::TIMER_MINUTE).wrapping_sub(1);
-    ram.w8(
-        vars::TIMER_MINUTE,
-        if (minute as i8) < 0 { 0 } else { minute },
-    );
-    Ok(())
 }
 
 #[cfg(test)]

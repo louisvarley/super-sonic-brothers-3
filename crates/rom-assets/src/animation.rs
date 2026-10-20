@@ -49,7 +49,14 @@ pub fn load_tails_animation(archive: &Archive) -> Result<TailsAnimation, String>
             .as_u64()
             .ok_or_else(|| format!("{path}: {key} missing"))? as usize)
     };
-    Ok(TailsAnimation::from_block(
+    let tails_tails = archive.read_json("objects/tails-tails/animations.json")?;
+    let tails_block: Vec<u8> = tails_tails["data"]
+        .as_array()
+        .ok_or_else(|| "objects/tails-tails/animations.json: data is not an array".to_string())?
+        .iter()
+        .map(|v| v.as_u64().unwrap_or(0) as u8)
+        .collect();
+    let mut animation = TailsAnimation::from_block(
         block,
         get("table")?,
         get("walk")?,
@@ -58,5 +65,11 @@ pub fn load_tails_animation(archive: &Archive) -> Result<TailsAnimation, String>
         get("roll")?,
         get("roll2")?,
         get("push")?,
-    ))
+    );
+    animation.set_tails_animation(
+        tails_block,
+        tails_tails["table"].as_u64().unwrap_or(0) as usize,
+        tails_tails["directional"].as_u64().unwrap_or(0) as usize,
+    );
+    Ok(animation)
 }

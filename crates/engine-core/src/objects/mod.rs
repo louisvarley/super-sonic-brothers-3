@@ -8,12 +8,14 @@
 pub mod actend;
 pub mod boss;
 pub mod common;
+pub mod dust;
 pub mod ehz;
 pub mod ghz_mz;
 pub mod manager;
 pub mod smb3;
 pub mod solid;
 pub mod sprites;
+pub mod tails_tails;
 pub mod touch;
 
 pub use manager::ObjectManager;
@@ -73,6 +75,22 @@ pub struct Objects {
     /// The collapsing ledge's height profile and fragment delays.
     pub ledge_slope: Vec<i8>,
     pub ledge_delays: Vec<u8>,
+    /// Tails' animation data (also supplies the tails object's animation block).
+    pub tails_animation: Option<crate::animation::TailsAnimation>,
+    /// The dust effect's mappings/DPLC/scripts.
+    pub dust_sprites: Option<crate::graphics::SpriteData>,
+    /// Buzz Bomber's animation scripts.
+    pub buzz_animations: Vec<u8>,
+    /// The monitor object's animation scripts (mapping frame = monitor type).
+    pub monitor_animations: Vec<u8>,
+    /// Monitor frame offsets (static mapping pointers for the contents item).
+    pub monitor_frame_offsets: Vec<usize>,
+    /// Motobug's animation scripts.
+    pub motobug_animations: Vec<u8>,
+    /// Chopper's animation scripts.
+    pub chopper_animations: Vec<u8>,
+    /// Animal species tables (`objects/animal/animals.json`).
+    pub animal_data: Option<crate::graphics::AnimalData>,
 }
 
 impl Default for Objects {
@@ -95,6 +113,14 @@ impl Objects {
             level_order: Vec::new(),
             ledge_slope: Vec::new(),
             ledge_delays: Vec::new(),
+            tails_animation: None,
+            dust_sprites: None,
+            buzz_animations: Vec::new(),
+            monitor_animations: Vec::new(),
+            monitor_frame_offsets: Vec::new(),
+            motobug_animations: Vec::new(),
+            chopper_animations: Vec::new(),
+            animal_data: None,
         }
     }
 
@@ -217,11 +243,11 @@ impl Objects {
             0x1A => ghz_mz::ledge(ram, o, &self.ledge_slope, &self.ledge_delays)?,
             0x1C => ghz_mz::scenery(ram, o)?,
             0x1F => ghz_mz::crabmeat(ram, sets, o)?,
-            0x22 => boss::buzz_bomber(ram, o),
+            0x22 => boss::buzz_bomber(ram, o, &self.buzz_animations),
             0x23 => boss::missile(ram, o),
-            0x26 => ehz::monitor(ram, sets, o)?,
-            0x2B => ghz_mz::chopper(ram, o),
-            0x2E => ehz::monitor_contents(ram, o)?,
+            0x26 => ehz::monitor(ram, sets, o, &self.monitor_animations)?,
+            0x2B => ghz_mz::chopper(ram, o, &self.chopper_animations),
+            0x2E => ehz::monitor_contents(ram, o, &self.monitor_frame_offsets)?,
             0x2F => boss::grass_platform(ram, sets, o, &self.mz_heights)?,
             0x30 => ghz_mz::glass_block(ram, sets, o)?,
             0x31 => ghz_mz::chained_stomper(ram, sets, o)?,
@@ -234,7 +260,7 @@ impl Objects {
             0x3E => actend::egg_prison(ram, sets, o)?,
             0x39 => actend::game_over(ram, o),
             0x3A => actend::results(ram, o, &self.level_order)?,
-            0x40 => ghz_mz::motobug(ram, sets, o)?,
+            0x40 => ghz_mz::motobug(ram, sets, o, &self.motobug_animations)?,
             0x41 => ehz::spring(ram, sets, o, self.spring_slopes.as_ref())?,
             0x42 => ghz_mz::newtron(ram, sets, o)?,
             0x44 => ghz_mz::edge_wall(ram, sets, o),
@@ -270,7 +296,7 @@ impl Objects {
             ids::GOAL_TEXT => {}
             common_ids::LOST_RINGS => common::lost_rings(ram, sets, o, self.slot_counter),
             common_ids::EXPLOSION => common::explosion(ram, o),
-            common_ids::ANIMAL => common::animal(ram, o),
+            common_ids::ANIMAL => common::animal(ram, sets, o, self.animal_data.as_ref()),
             common_ids::POINTS => common::points(ram, o),
             common_ids::GOAL => {
                 if crate::camera::is_easter_egg(ram.u8(vars::CURRENT_ZONE_AND_ACT)) {
@@ -281,7 +307,12 @@ impl Objects {
             }
             // Tails' tails (object $05) and the players' dust are display-only in the legacy code; they never
             // write to a player or an interactive object.
-            common_ids::TAILS_TAILS | common_ids::DUST => {}
+            common_ids::TAILS_TAILS => {
+                if let Some(anim) = self.tails_animation.as_ref() {
+                    tails_tails::tails_tails(ram, o, anim);
+                }
+            }
+            common_ids::DUST => dust::dust(ram, o, self.dust_sprites.as_ref()),
             _ => {
                 if !self.unported_seen.contains(&id) {
                     self.unported_seen.push(id);
@@ -309,8 +340,8 @@ impl Objects {
             0x18 => ehz::platform(ram, sets, o)?,
             0x1C => ehz::scenery_s2(ram, o)?,
             0x25 => {}
-            0x26 => ehz::monitor(ram, sets, o)?,
-            0x2E => ehz::monitor_contents(ram, o)?,
+            0x26 => ehz::monitor(ram, sets, o, &self.monitor_animations)?,
+            0x2E => ehz::monitor_contents(ram, o, &self.monitor_frame_offsets)?,
             0x36 => ehz::spikes_s2(ram, sets, o)?,
             0x39 => actend::game_over(ram, o),
             0x3A => actend::results(ram, o, &self.level_order)?,
@@ -327,9 +358,14 @@ impl Objects {
             0xDE => actend::giant_ring_flash(ram, o),
             common_ids::LOST_RINGS => common::lost_rings(ram, sets, o, self.slot_counter),
             common_ids::EXPLOSION => common::explosion(ram, o),
-            common_ids::ANIMAL => common::animal(ram, o),
+            common_ids::ANIMAL => common::animal(ram, sets, o, self.animal_data.as_ref()),
             common_ids::POINTS => common::points(ram, o),
-            common_ids::TAILS_TAILS | common_ids::DUST => {}
+            common_ids::TAILS_TAILS => {
+                if let Some(anim) = self.tails_animation.as_ref() {
+                    tails_tails::tails_tails(ram, o, anim);
+                }
+            }
+            common_ids::DUST => dust::dust(ram, o, self.dust_sprites.as_ref()),
             _ => {
                 if !self.unported_seen.contains(&id) {
                     self.unported_seen.push(id);

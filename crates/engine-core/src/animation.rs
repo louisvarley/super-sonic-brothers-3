@@ -246,6 +246,9 @@ pub struct TailsAnimation {
     roll: usize,
     roll2: usize,
     push: usize,
+    tails_block: Vec<u8>,
+    tails_table: usize,
+    tails_directional: usize,
 }
 
 impl TailsAnimation {
@@ -269,7 +272,179 @@ impl TailsAnimation {
             roll,
             roll2,
             push,
+            tails_block: Vec::new(),
+            tails_table: 0,
+            tails_directional: 0,
         }
+    }
+
+    /// The tails object's own animation block (objects/tails-tails/animations.json).
+    pub fn set_tails_animation(&mut self, block: Vec<u8>, table: usize, directional: usize) {
+        self.tails_block = block;
+        self.tails_table = table;
+        self.tails_directional = directional;
+    }
+
+    pub fn tails_animation_map(&self, parent_anim: u8) -> u8 {
+        self.tails_block
+            .get(parent_anim as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn run_tails(&self, ram: &mut Ram, o: Obj, parent: Obj) {
+        let block = &self.tails_block;
+        if block.is_empty() {
+            return;
+        }
+        let anim = o.anim(ram);
+        if anim != o.prev_anim(ram) {
+            o.set_prev_anim(ram, anim);
+            o.set_anim_frame(ram, 0);
+            o.set_anim_frame_duration(ram, 0);
+            o.set_pushing(ram, false);
+        }
+        let raw = ((block[self.tails_table + anim as usize * 2] as u16) << 8)
+            | block[self.tails_table + anim as usize * 2 + 1] as u16;
+        let script = (self.tails_table as isize + (raw as i16) as isize).max(0) as usize;
+        let d0 = block[script];
+        if (d0 as i8) >= 0 {
+            o.set_render_flags(ram, (o.render_flags(ram) & !3) | (o.status(ram) & 1));
+            let d = o.anim_frame_duration(ram).wrapping_sub(1);
+            o.set_anim_frame_duration(ram, d);
+            if (d as i8) >= 0 {
+                return;
+            }
+            o.set_anim_frame_duration(ram, d0);
+            self.step_block(ram, o, block, script);
+            return;
+        }
+        let d = o.anim_frame_duration(ram).wrapping_sub(1);
+        o.set_anim_frame_duration(ram, d);
+        if (d as i8) >= 0 {
+            return;
+        }
+        match d0 {
+            0xFF => self.walk_run_block(ram, o),
+            0xFE => self.roll_block(ram, o),
+            _ => self.directional(ram, o, parent),
+        }
+    }
+
+    fn step_block(&self, ram: &mut Ram, o: Obj, block: &[u8], script: usize) {
+        let d1 = o.anim_frame(ram);
+        let d0 = block[script + 1 + d1 as usize];
+        if d0 < 0xF0 {
+            show(ram, o, d0);
+            return;
+        }
+        match d0 {
+            0xFF => {
+                o.set_anim_frame(ram, 0);
+                show(ram, o, block[script + 1]);
+            }
+            0xFE => {
+                let back = block[script + 2 + d1 as usize];
+                let frame = d1.wrapping_sub(back);
+                o.set_anim_frame(ram, frame);
+                show(ram, o, block[script + 1 + frame as usize]);
+            }
+            0xFD => o.set_anim(ram, block[script + 2 + d1 as usize]),
+            _ => {}
+        }
+    }
+
+    fn walk_run_block(&self, ram: &mut Ram, o: Obj) {
+        if o.flip_angle(ram) != 0 {
+            flip(ram, o, 0x75);
+            return;
+        }
+        let mut d1 = 0;
+        let mut d0 = o.angle(ram);
+        if (d0 as i8) > 0 {
+            d0 = d0.wrapping_sub(1);
+        }
+        let d2 = o.status(ram) & 1;
+        if d2 == 0 {
+            d0 = !d0;
+        }
+        d0 = d0.wrapping_add(0x10);
+        if (d0 as i8) < 0 {
+            d1 = 3;
+        }
+        o.set_render_flags(ram, (o.render_flags(ram) & !3) | (d2 ^ d1));
+        if o.pushing(ram) {
+            let mut d2 = o.inertia(ram) as i32;
+            if d2 >= 0 {
+                d2 = -d2;
+            }
+            d2 += 0x800;
+            if (d2 as i16) < 0 {
+                d2 = 0;
+            }
+            o.set_anim_frame_duration(ram, ((d2 & 0xFFFF) >> 6) as u8);
+            o.set_render_flags(ram, (o.render_flags(ram) & !3) | (o.status(ram) & 1));
+            self.step_block(ram, o, &self.tails_block, self.push);
+            return;
+        }
+        d0 = (d0 >> 4) & 6;
+        let mut speed = ((o.inertia(ram) as i32).unsigned_abs() & 0xFFFF) as i32;
+        if (o.status_secondary(ram) as i8) < 0 {
+            speed = (speed * 2) & 0xFFFF;
+        }
+        let mut d3 = (d0 as u32 * 4) as u8;
+        let mut script = self.walk;
+        if speed >= 0x600 {
+            script = self.run;
+            let half = d0 >> 1;
+            d0 = d0.wrapping_add(half).wrapping_mul(2);
+            d3 = d0;
+            if speed >= 0x700 {
+                script = self.fastest;
+            }
+        }
+        let mut dur = -speed + 0x800;
+        if (dur as i16) < 0 {
+            dur = 0;
+        }
+        o.set_anim_frame_duration(ram, ((dur & 0xFFFF) >> 8) as u8);
+        self.step_block(ram, o, &self.tails_block, script);
+        o.set_mapping_frame(ram, o.mapping_frame(ram).wrapping_add(d3));
+    }
+
+    fn roll_block(&self, ram: &mut Ram, o: Obj) {
+        let speed = ((o.inertia(ram) as i32).unsigned_abs() & 0xFFFF) as i32;
+        let script = if speed >= 0x600 {
+            self.roll2
+        } else {
+            self.roll
+        };
+        let mut dur = -speed + 0x400;
+        if (dur as i16) < 0 {
+            dur = 0;
+        }
+        o.set_anim_frame_duration(ram, ((dur & 0xFFFF) >> 8) as u8);
+        o.set_render_flags(ram, (o.render_flags(ram) & !3) | (o.status(ram) & 1));
+        self.step_block(ram, o, &self.tails_block, script);
+    }
+
+    fn directional(&self, ram: &mut Ram, o: Obj, parent: Obj) {
+        let mut d0 = crate::math::calc_angle(parent.x_vel(ram), parent.y_vel(ram));
+        if o.id(ram) != 5 {
+            d0 = d0.wrapping_add(ram.u8(vars::OBJECT_RAM_BLOCK_INDICES));
+        }
+        let mut d1 = 0;
+        let d2 = o.status(ram) & 1;
+        d0 = if d2 == 0 { !d0 } else { d0.wrapping_add(0x80) };
+        d0 = d0.wrapping_add(0x10);
+        if (d0 as i8) < 0 {
+            d1 = 3;
+        }
+        o.set_render_flags(ram, (o.render_flags(ram) & !3) | (d2 ^ d1));
+        let d3 = (d0 >> 3) & 0x0C;
+        o.set_anim_frame_duration(ram, 3);
+        self.step_block(ram, o, &self.tails_block, self.tails_directional);
+        o.set_mapping_frame(ram, o.mapping_frame(ram).wrapping_add(d3));
     }
 
     fn byte(&self, script: usize, index: usize) -> u8 {

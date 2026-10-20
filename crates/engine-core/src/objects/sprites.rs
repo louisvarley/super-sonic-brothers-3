@@ -6,6 +6,68 @@
 
 use crate::{vars, Obj, Ram};
 
+/// `ObjectKit.Animate` (0x1A28E) over a raw script block: mapping-frame bytes and the loop/back/switch commands.
+pub fn animate_object(ram: &mut Ram, o: Obj, block: &[u8]) {
+    if block.is_empty() {
+        return;
+    }
+    let anim = o.anim(ram);
+    if anim != o.prev_anim(ram) {
+        o.set_prev_anim(ram, anim);
+        o.set_anim_frame(ram, 0);
+        o.set_anim_frame_duration(ram, 0);
+    }
+    let d = o.anim_frame_duration(ram).wrapping_sub(1);
+    o.set_anim_frame_duration(ram, d);
+    if (d as i8) >= 0 {
+        return;
+    }
+    let raw = ((block[anim as usize * 2] as u16) << 8) | block[anim as usize * 2 + 1] as u16;
+    let script = (raw as i16) as usize;
+    if script >= block.len() {
+        return;
+    }
+    o.set_anim_frame_duration(ram, block[script]);
+    let d1 = o.anim_frame(ram);
+    let d0 = block[script + 1 + d1 as usize];
+    if d0 < 0x80 {
+        show_frame(ram, o, d0);
+        return;
+    }
+    match d0 {
+        0xFF => {
+            o.set_anim_frame(ram, 0);
+            show_frame(ram, o, block[script + 1]);
+        }
+        0xFE => {
+            let back = block[script + 2 + d1 as usize];
+            let frame = d1.wrapping_sub(back);
+            o.set_anim_frame(ram, frame);
+            show_frame(ram, o, block[script + 1 + frame as usize]);
+        }
+        0xFD => o.set_anim(ram, block[script + 2 + d1 as usize]),
+        0xFC => {
+            o.set_routine(ram, o.routine(ram).wrapping_add(2));
+            o.set_anim_frame_duration(ram, 0);
+            o.set_anim_frame(ram, d1.wrapping_add(1));
+        }
+        0xFB => {
+            o.set_anim_frame(ram, 0);
+            o.set_routine_secondary(ram, 0);
+        }
+        0xFA => o.set_routine_secondary(ram, o.routine_secondary(ram).wrapping_add(2)),
+        0xF9 => o.set_byte(ram, 0x2A, o.byte(ram, 0x2A).wrapping_add(2)),
+        _ => {}
+    }
+}
+
+fn show_frame(ram: &mut Ram, o: Obj, frame: u8) {
+    o.set_mapping_frame(ram, frame & 0x1F);
+    let flip = (frame.rotate_left(3) ^ o.status(ram)) & 3;
+    o.set_render_flags(ram, (o.render_flags(ram) & !3) | flip);
+    o.set_anim_frame(ram, o.anim_frame(ram).wrapping_add(1));
+}
+
 /// `DisplaySprite` (0x1A23A): queue in the priority's list.
 pub fn display_sprite(ram: &mut Ram, o: Obj) {
     if o.id(ram) == 0 {
