@@ -295,6 +295,41 @@ impl engine_core::world::LevelSource for LevelData {
             tiles,
         })
     }
+
+    fn objects(&self) -> Vec<engine_core::world::ObjectSpawn> {
+        self.objects
+            .iter()
+            .map(|o| engine_core::world::ObjectSpawn {
+                x: o.x,
+                y: o.y,
+                id: o.id,
+                subtype: o.subtype,
+                flip_x: o.flip_x,
+                flip_y: o.flip_y,
+                remember: o.remember,
+            })
+            .collect()
+    }
+
+    fn object_list_address(&self) -> u32 {
+        self.object_list_address
+    }
+
+    fn object_boundary_x(&self) -> i32 {
+        self.object_boundary_x
+    }
+
+    fn rings(&self) -> Vec<engine_core::world::RingSpawn> {
+        self.ring_groups
+            .iter()
+            .map(|g| engine_core::world::RingSpawn {
+                x: g.x,
+                y: g.y,
+                count: g.count,
+                vertical: g.vertical,
+            })
+            .collect()
+    }
 }
 
 fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {

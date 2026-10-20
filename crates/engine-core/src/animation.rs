@@ -7,6 +7,11 @@
 
 use crate::{vars, Obj, Ram};
 
+/// A player's animation (Sonic's or Tails' own interpreter); both live in RAM like the physics.
+pub trait PlayerAnimation {
+    fn animate(&self, ram: &mut Ram, o: Obj);
+}
+
 /// Sonic's extracted animation block and the two script tables (`objects/sonic/animations.json`).
 #[derive(Clone, Debug, Default)]
 pub struct SonicAnimation {
@@ -221,6 +226,224 @@ impl SonicAnimation {
         set_flip_from_status(ram, o);
         self.step(ram, o, script);
     }
+}
+
+impl PlayerAnimation for SonicAnimation {
+    fn animate(&self, ram: &mut Ram, o: Obj) {
+        SonicAnimation::animate(self, ram, o);
+    }
+}
+
+/// Tails' animation (TailsAnimation.cs, objects/tails/animations.json): the same script format with his own
+/// three speed sets for walk/run/fastest, roll and push.
+#[derive(Clone, Debug, Default)]
+pub struct TailsAnimation {
+    block: Vec<u8>,
+    table: usize,
+    walk: usize,
+    run: usize,
+    fastest: usize,
+    roll: usize,
+    roll2: usize,
+    push: usize,
+}
+
+impl TailsAnimation {
+    #[allow(clippy::too_many_arguments)] // one JSON field per script-table offset
+    pub fn from_block(
+        block: Vec<u8>,
+        table: usize,
+        walk: usize,
+        run: usize,
+        fastest: usize,
+        roll: usize,
+        roll2: usize,
+        push: usize,
+    ) -> Self {
+        Self {
+            block,
+            table,
+            walk,
+            run,
+            fastest,
+            roll,
+            roll2,
+            push,
+        }
+    }
+
+    fn byte(&self, script: usize, index: usize) -> u8 {
+        self.block.get(script + index).copied().unwrap_or(0)
+    }
+
+    fn script(&self, anim: u8) -> usize {
+        let raw = ((self.byte(self.table, anim as usize * 2) as u16) << 8)
+            | self.byte(self.table, anim as usize * 2 + 1) as u16;
+        (self.table as isize + (raw as i16) as isize).max(0) as usize
+    }
+
+    fn step(&self, ram: &mut Ram, o: Obj, script: usize) {
+        let d1 = o.anim_frame(ram);
+        let d0 = self.byte(script, 1 + d1 as usize);
+        if d0 < 0xF0 {
+            show(ram, o, d0);
+            return;
+        }
+        match d0 {
+            0xFF => {
+                o.set_anim_frame(ram, 0);
+                show(ram, o, self.byte(script, 1));
+            }
+            0xFE => {
+                let back = self.byte(script, 2 + d1 as usize);
+                let frame = d1.wrapping_sub(back);
+                o.set_anim_frame(ram, frame);
+                show(ram, o, self.byte(script, 1 + frame as usize));
+            }
+            0xFD => o.set_anim(ram, self.byte(script, 2 + d1 as usize)),
+            _ => {}
+        }
+    }
+
+    fn walk_run(&self, ram: &mut Ram, o: Obj) {
+        if o.flip_angle(ram) != 0 {
+            flip(ram, o, 0x75);
+            return;
+        }
+        let mut d1 = 0;
+        let mut d0 = o.angle(ram);
+        if (d0 as i8) > 0 {
+            d0 = d0.wrapping_sub(1);
+        }
+        let d2 = o.status(ram) & 1;
+        if d2 == 0 {
+            d0 = !d0;
+        }
+        d0 = d0.wrapping_add(0x10);
+        if (d0 as i8) < 0 {
+            d1 = 3;
+        }
+        o.set_render_flags(ram, (o.render_flags(ram) & !3) | (d2 ^ d1));
+        if o.pushing(ram) {
+            push_body(ram, o, self.push, self);
+            return;
+        }
+        d0 = (d0 >> 4) & 6;
+        let mut speed = ((o.inertia(ram) as i32).unsigned_abs() & 0xFFFF) as i32;
+        if (o.status_secondary(ram) as i8) < 0 {
+            speed = (speed * 2) & 0xFFFF;
+        }
+        let mut d3 = (d0 as u32 * 4) as u8;
+        let mut script = self.walk;
+        if speed >= 0x600 {
+            script = self.run;
+            let half = d0 >> 1;
+            d0 = d0.wrapping_add(half).wrapping_mul(2);
+            d3 = d0;
+            if speed >= 0x700 {
+                script = self.fastest;
+            }
+        }
+        let mut dur = -speed + 0x800;
+        if (dur as i16) < 0 {
+            dur = 0;
+        }
+        o.set_anim_frame_duration(ram, ((dur & 0xFFFF) >> 8) as u8);
+        self.step(ram, o, script);
+        o.set_mapping_frame(ram, o.mapping_frame(ram).wrapping_add(d3));
+    }
+
+    fn roll(&self, ram: &mut Ram, o: Obj) {
+        let speed = ((o.inertia(ram) as i32).unsigned_abs() & 0xFFFF) as i32;
+        let script = if speed >= 0x600 {
+            self.roll2
+        } else {
+            self.roll
+        };
+        let mut dur = -speed + 0x400;
+        if (dur as i16) < 0 {
+            dur = 0;
+        }
+        o.set_anim_frame_duration(ram, ((dur & 0xFFFF) >> 8) as u8);
+        set_flip_from_status(ram, o);
+        self.step(ram, o, script);
+    }
+}
+
+impl PlayerAnimation for TailsAnimation {
+    fn animate(&self, ram: &mut Ram, o: Obj) {
+        TailsAnimation::run(self, ram, o);
+    }
+}
+
+impl TailsAnimation {
+    /// Tails_Animate's interpreter (0x20C2A). The tails object's directional scripts are a display-only path we do
+    /// not run (object  is inert), so a negative non-walk/roll byte leaves the frame alone.
+    fn run(&self, ram: &mut Ram, o: Obj) {
+        let anim = o.anim(ram);
+        if anim != o.prev_anim(ram) {
+            o.set_prev_anim(ram, anim);
+            o.set_anim_frame(ram, 0);
+            o.set_anim_frame_duration(ram, 0);
+            o.set_pushing(ram, false);
+        }
+        let script = self.script(anim);
+        let d0 = self.byte(script, 0);
+        if (d0 as i8) >= 0 {
+            set_flip_from_status(ram, o);
+            let next = o.anim_frame_duration(ram).wrapping_sub(1);
+            o.set_anim_frame_duration(ram, next);
+            if (next as i8) >= 0 {
+                return;
+            }
+            o.set_anim_frame_duration(ram, d0);
+            self.step(ram, o, script);
+            return;
+        }
+        let next = o.anim_frame_duration(ram).wrapping_sub(1);
+        o.set_anim_frame_duration(ram, next);
+        if (next as i8) >= 0 {
+            return;
+        }
+        match d0 {
+            0xFF => self.walk_run(ram, o),
+            0xFE => self.roll(ram, o),
+            _ => {}
+        }
+    }
+}
+
+fn push_body(ram: &mut Ram, o: Obj, script: usize, anim: &TailsAnimation) {
+    let mut d2 = o.inertia(ram) as i32;
+    if d2 >= 0 {
+        d2 = -d2;
+    }
+    d2 += 0x800;
+    if (d2 as i16) < 0 {
+        d2 = 0;
+    }
+    o.set_anim_frame_duration(ram, ((d2 & 0xFFFF) >> 6) as u8);
+    set_flip_from_status(ram, o);
+    anim.step(ram, o, script);
+}
+
+fn flip(ram: &mut Ram, o: Obj, base: u8) {
+    let mut d0 = o.flip_angle(ram);
+    if (o.status(ram) & 1) == 0 {
+        o.set_render_flags(ram, o.render_flags(ram) & 0xFC);
+        d0 = d0.wrapping_add(0x0B);
+    } else {
+        o.set_render_flags(ram, o.render_flags(ram) & 0xFC);
+        if o.flip_turned(ram) != 0 {
+            o.set_render_flags(ram, o.render_flags(ram) | 1);
+            d0 = d0.wrapping_add(0x0B);
+        } else {
+            o.set_render_flags(ram, o.render_flags(ram) | 3);
+            d0 = 0x8Fu8.wrapping_sub(d0);
+        }
+    }
+    o.set_mapping_frame(ram, d0 / 0x16 + base);
+    o.set_anim_frame_duration(ram, 0);
 }
 
 /// One script-table offset per animation (offsets are signed, relative to the table start).

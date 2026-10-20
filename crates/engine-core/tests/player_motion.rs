@@ -1,13 +1,9 @@
-//! Phase 2 M3b: Sonic's player physics and the camera against the legacy `.sb3g` traces.
+//! Phase 2 M4a: Sonic, Tails, the SMB3 1-1 objects and the camera against the legacy `.sb3g` traces.
 //!
 //! Four title-card-free SMB3 World 1-1 traces (`tests/golden/smb3-1-1-playing-*`) are replayed for 600 ticks with
 //! the input scripts the legacy engine used. The comparison is [`CompareMask::MOTION`]: the camera, Sonic's twelve
-//! fields and the cheap scalars; Tails, the RAM/region hashes and the framebuffer belong to later milestones.
-//!
-//! The object manager and `TouchResponse` are M4, so the traces leave pure motion when a dynamic object first
-//! touches Sonic. The test pins those known ticks and prints them: before the pin every compared field must match,
-//! and the only allowed divergence at the pin is the object's effect. `spindash` matches player+camera for all 600
-//! ticks and only the score (a broken brick block) differs.
+//! fields, the cheap scalars and (now that the objects run) rings/score/lives. Tails' fields, the RAM/region hashes
+//! and the framebuffer are still excluded.
 //!
 //! The archive these traces were recorded from (`sonicbros3.bin`) is ROM-derived and deliberately not committed, so
 //! the test skips when it is absent.
@@ -17,42 +13,6 @@ use engine_core::vars;
 use golden_trace::{compare_masked, CompareMask, Entity, Tick, Trace};
 use rom_assets::{Archive, LevelData};
 use std::path::{Path, PathBuf};
-
-/// The first divergence a scenario is allowed to have, and its cause. `None` means the field set must match for
-/// the whole trace.
-struct Known {
-    /// The first `CompareMask::MOTION` divergence (tick, field).
-    motion: Option<(u32, &'static str)>,
-    /// The first divergence of the camera and Sonic's fields alone (tick, field).
-    player_camera: Option<(u32, &'static str)>,
-    why: &'static str,
-}
-
-fn known(name: &str) -> Known {
-    match name {
-        "idle" => Known {
-            motion: Some((368, "sonic.yv")),
-            player_camera: Some((368, "sonic.yv")),
-            why: "a Goomba reaches the idle Sonic and KillCharacter knocks him back (M4 object contact)",
-        },
-        "right" => Known {
-            motion: Some((79, "sonic.xv")),
-            player_camera: Some((79, "sonic.xv")),
-            why: "the same Goomba reaches Sonic at x=$B4 (M4 object contact)",
-        },
-        "jump" => Known {
-            motion: Some((86, "cameraX")),
-            player_camera: Some((86, "cameraX")),
-            why: "Sonic is pushed out of a solid SMB3 block's side (Solid.Side zeroes xv/inertia) (M4)",
-        },
-        "spindash" => Known {
-            motion: Some((70, "score")),
-            player_camera: None,
-            why: "a rolled-into brick block breaks and awards points; Sonic/camera are unaffected (M4)",
-        },
-        _ => unreachable!(),
-    }
-}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -76,7 +36,7 @@ fn parse_buttons(text: &str) -> u8 {
     b
 }
 
-fn load_script(path: &std::path::Path) -> Vec<(u32, u8)> {
+fn load_script(path: &Path) -> Vec<(u32, u8)> {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let mut changes = Vec::new();
     for raw in text.lines() {
@@ -149,7 +109,8 @@ fn rust_tick(session: &Session, tick: u32, region_count: usize) -> Tick {
 fn describe(t: &Tick) -> String {
     format!(
         "tick {} cam ({}, {}) sonic x={} y={} xv={} yv={} inertia={} angle=${:02X} status=${:02X} \
-         status2=${:02X} routine={} anim={} frame={} sub={}",
+         status2=${:02X} routine={} anim={} frame={} sub={} | rings={} score={} lives={} | tails x={} y={} \
+         xv={} yv={} inertia={} status=${:02X} status2=${:02X} routine={} anim={} frame={}",
         t.tick,
         t.camera_x,
         t.camera_y,
@@ -165,42 +126,20 @@ fn describe(t: &Tick) -> String {
         t.sonic.anim,
         t.sonic.frame,
         t.sonic.subtype,
+        t.rings,
+        t.score,
+        t.lives,
+        t.tails.x,
+        t.tails.y,
+        t.tails.x_vel,
+        t.tails.y_vel,
+        t.tails.inertia,
+        t.tails.status,
+        t.tails.status_secondary,
+        t.tails.routine,
+        t.tails.anim,
+        t.tails.frame,
     )
-}
-
-/// Compare only the fields this milestone ports: the camera and Sonic's twelve entity fields, plus the timer and
-/// game mode (which the session also runs). Rings, score and lives change on object contact (M4).
-fn compare_player_camera(legacy: &Trace, port: &Trace) -> Option<(u32, &'static str)> {
-    for (e, a) in legacy.ticks.iter().zip(&port.ticks) {
-        macro_rules! check {
-            ($field:expr, $e:expr, $a:expr) => {
-                if $e != $a {
-                    return Some((e.tick, $field));
-                }
-            };
-        }
-        check!("cameraX", e.camera_x, a.camera_x);
-        check!("cameraY", e.camera_y, a.camera_y);
-        check!("sonic.x", e.sonic.x, a.sonic.x);
-        check!("sonic.y", e.sonic.y, a.sonic.y);
-        check!("sonic.xv", e.sonic.x_vel, a.sonic.x_vel);
-        check!("sonic.yv", e.sonic.y_vel, a.sonic.y_vel);
-        check!("sonic.inertia", e.sonic.inertia, a.sonic.inertia);
-        check!("sonic.angle", e.sonic.angle, a.sonic.angle);
-        check!("sonic.status", e.sonic.status, a.sonic.status);
-        check!(
-            "sonic.status2",
-            e.sonic.status_secondary,
-            a.sonic.status_secondary
-        );
-        check!("sonic.routine", e.sonic.routine, a.sonic.routine);
-        check!("sonic.anim", e.sonic.anim, a.sonic.anim);
-        check!("sonic.frame", e.sonic.frame, a.sonic.frame);
-        check!("sonic.sub", e.sonic.subtype, a.sonic.subtype);
-        check!("timer", e.timer, a.timer);
-        check!("gameMode", e.game_mode, a.game_mode);
-    }
-    None
 }
 
 fn replay(
@@ -208,7 +147,8 @@ fn replay(
     root: &Path,
     level: &LevelData,
     sets: &engine_core::collision::CollisionSets,
-    animation: &engine_core::animation::SonicAnimation,
+    sonic_animation: &engine_core::animation::SonicAnimation,
+    tails_animation: &engine_core::animation::TailsAnimation,
 ) -> (Trace, Trace) {
     let trace_path = root.join(format!("tests/golden/smb3-1-1-playing-{name}.sb3g.gz"));
     let legacy =
@@ -228,7 +168,8 @@ fn replay(
         0x40,
         1,
         sets.clone(),
-        animation.clone(),
+        sonic_animation.clone(),
+        tails_animation.clone(),
     )
     .unwrap_or_else(|e| panic!("{name}: world setup: {e}"));
     let mut ticks = Vec::with_capacity(legacy.ticks.len());
@@ -248,7 +189,7 @@ fn replay(
 }
 
 #[test]
-fn player_and_camera_motion_matches_the_legacy_traces() {
+fn player_camera_and_objects_match_the_legacy_traces() {
     let root = repo_root();
     let archive_path = root.join("sonicbros3.bin");
     if !archive_path.exists() {
@@ -261,65 +202,41 @@ fn player_and_camera_motion_matches_the_legacy_traces() {
     let archive = Archive::open(&archive_path).expect("open sonicbros3.bin");
     let level = LevelData::load(&archive, 0x40, 1).expect("load SMB3 1-1");
     let sets = rom_assets::load_collision_sets(&archive).expect("collision sets");
-    let animation = rom_assets::load_sonic_animation(&archive).expect("Sonic animations");
+    let sonic_animation = rom_assets::load_sonic_animation(&archive).expect("Sonic animations");
+    let tails_animation = rom_assets::load_tails_animation(&archive).expect("Tails animations");
 
-    let mut report = Vec::new();
+    let mut failures = Vec::new();
 
     for name in ["idle", "right", "jump", "spindash"] {
-        let (legacy, port) = replay(name, &root, &level, &sets, &animation);
-        let expected = known(name);
-
-        let motion = compare_masked(&legacy, &port, CompareMask::MOTION);
-        let player_camera = compare_player_camera(&legacy, &port);
-        let motion_key = motion.as_ref().map(|d| (d.tick, d.field.as_str()));
-        let motion_ok = motion_key == expected.motion;
-        let player_camera_ok = player_camera == expected.player_camera;
-
-        match &motion {
+        let (legacy, port) = replay(
+            name,
+            &root,
+            &level,
+            &sets,
+            &sonic_animation,
+            &tails_animation,
+        );
+        match compare_masked(&legacy, &port, CompareMask::MOTION) {
             None => println!(
-                "{name}: MOTION matches for all {} ticks",
+                "{name}: MOTION matches for all {} ticks (Sonic + camera + rings/score/lives)",
                 legacy.ticks.len()
             ),
-            Some(d) => {
-                println!("{name}: first MOTION divergence: {d}");
-                if let Some(index) = legacy.ticks.iter().position(|t| t.tick == d.tick) {
+            Some(divergence) => {
+                println!("{name}: first MOTION divergence: {divergence}");
+                if let Some(index) = legacy.ticks.iter().position(|t| t.tick == divergence.tick) {
                     for i in index.saturating_sub(5)..(index + 6).min(legacy.ticks.len()) {
                         println!("  legacy {}", describe(&legacy.ticks[i]));
                         println!("  port   {}", describe(&port.ticks[i]));
                     }
                 }
+                failures.push(name);
             }
         }
-        match player_camera {
-            None => println!(
-                "{name}: player + camera fields match for all {} ticks",
-                port.ticks.len()
-            ),
-            Some((tick, field)) => {
-                println!("{name}: first player/camera divergence: tick {tick}: {field}")
-            }
-        }
-        println!("{name}: known M4 blocker: {}", expected.why);
-
-        assert!(
-            motion_ok,
-            "{name}: the first MOTION divergence moved away from the pinned object-contact tick {:?}",
-            expected.motion
-        );
-        assert!(
-            player_camera_ok,
-            "{name}: the first player/camera divergence moved away from the pinned object-contact tick {:?}",
-            expected.player_camera
-        );
-        report.push((name, legacy.ticks.len(), motion, expected));
     }
 
-    println!("\nsummary (player/camera physics; object side effects are M4):");
-    for (name, ticks, motion, expected) in &report {
-        println!(
-            "  {name:<9} {ticks} ticks  first MOTION {:?}  player/camera {:?}",
-            motion.as_ref().map(|d| format!("{} {}", d.tick, d.field)),
-            expected.player_camera
-        );
-    }
+    assert!(
+        failures.is_empty(),
+        "MOTION diverged for: {}",
+        failures.join(", ")
+    );
 }

@@ -1,24 +1,27 @@
-//! One frame of a playing act, in `World.Step`'s order for the parts that affect Sonic and the camera:
-//! input, `Level_frame_counter`, `Sonic.Step`, `DeformBgLayer`, the VBlank's `Vint_runcount` and the level timer.
+//! One frame of a playing act in `World.Step`'s order: input, `Level_frame_counter`, Sonic, Tails, `RunObjects`,
+//! `DeformBgLayer`, the rings manager, the synced animation counters, `BuildSprites` (on-screen flags), the object
+//! manager, then the VBlank's `Vint_runcount` and level timer.
 //!
-//! `RunObjects`, the giant ring art stream, the rings manager, the PLC queue, oscillation, palette cycling, synced
-//! animations, the signpost, sprite building, the object manager, the HUD's VRAM writes and sound are later
-//! milestones (M4 onward) and are explicit no-ops here.
+//! Still no-ops (later milestones): the giant ring art stream, the PLC queue, oscillation, palette cycling, the
+//! signpost art, the HUD's VRAM digits, the sprite piece writer/VRAM and sound.
 //!
 //! A death requests a level restart (`$FE02`); as in `LevelSession` with title cards off, the act is rebuilt from the
 //! previous RAM in the same tick, keeping lives/score and the level-start variables.
 
-use crate::animation::SonicAnimation;
+use crate::animation::{SonicAnimation, TailsAnimation};
 use crate::camera::Camera;
 use crate::collision::CollisionSets;
+use crate::objects::sprites;
 use crate::player::Unported;
+use crate::rings::sync_animations;
 use crate::world::{LevelSource, World};
 use crate::{vars, Ram};
 
 pub struct Session {
     level: Box<dyn LevelSource>,
     sets: CollisionSets,
-    animation: SonicAnimation,
+    sonic_animation: SonicAnimation,
+    tails_animation: TailsAnimation,
     zone: u8,
     act: u8,
     pub world: World,
@@ -35,7 +38,8 @@ impl Session {
         zone: u8,
         act: u8,
         sets: CollisionSets,
-        animation: SonicAnimation,
+        sonic_animation: SonicAnimation,
+        tails_animation: TailsAnimation,
     ) -> Result<Self, Unported> {
         let world = World::new(level.as_ref(), zone, act, None)?;
         let camera_x = world.camera_x();
@@ -43,7 +47,8 @@ impl Session {
         Ok(Self {
             level,
             sets,
-            animation,
+            sonic_animation,
+            tails_animation,
             zone,
             act,
             world,
@@ -69,13 +74,29 @@ impl Session {
             .ram
             .w16(vars::LEVEL_FRAME_COUNTER, counter.wrapping_add(1));
 
+        let dying = self.world.ram.u8(vars::MAIN_CHARACTER) != 0
+            && self.world.sonic.obj.routine(&self.world.ram) >= crate::player::routine::DEAD;
         if self.world.ram.u8(vars::MAIN_CHARACTER) != 0 {
             let water = self.world.water.as_ref();
-            self.world
-                .sonic
-                .step(&mut self.world.ram, &self.sets, &self.animation, water)?;
+            self.world.sonic.step(
+                &mut self.world.ram,
+                &self.sets,
+                &self.sonic_animation,
+                water,
+            )?;
         }
-        // Objects.RunAfterPlayers (0x51A6) is M4.
+        if self.world.ram.u8(vars::SIDEKICK) == 2 {
+            let water = self.world.water.as_ref();
+            self.world.tails.step(
+                &mut self.world.ram,
+                &self.sets,
+                &self.tails_animation,
+                water,
+            )?;
+        }
+        self.world
+            .objects
+            .run_after_players(&mut self.world.ram, &self.sets, dying);
 
         if self.world.ram.u16(vars::LEVEL_INACTIVE_FLAG) != 0 {
             // 0x51C4: the Act is rebuilt straight away when title cards are off.
@@ -85,8 +106,11 @@ impl Session {
         }
 
         self.camera.deform_bg_layer(&mut self.world.ram)?;
-        // StreamGiantRingArt, Rings.Run, Plc.Run, Oscillation.Step, PaletteCycle, SyncAnimations.Step,
-        // SignpostArtLoad, Sprites.BuildSprites, ObjectManager.Run: no-ops (M4+).
+        // StreamGiantRingArt, Plc.Run, Oscillation.Step, PaletteCycle and SignpostArtLoad are later milestones.
+        self.world.rings.run(&mut self.world.ram);
+        sync_animations(&mut self.world.ram);
+        sprites::build_sprites(&mut self.world.ram);
+        self.world.object_manager.run(&mut self.world.ram);
 
         // VBlank: Vint_runcount, then the HUD (0x81E).
         let vint = self.world.ram.u32(vars::VINT_RUNCOUNT);
@@ -191,7 +215,7 @@ fn advance_timer(ram: &mut Ram) -> Result<(), Unported> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::animation::SonicAnimation;
+    use crate::animation::{SonicAnimation, TailsAnimation};
     use crate::collision::{CollisionSet, CollisionSets};
     use crate::player::routine;
     use crate::world::{Bounds, LevelSource, Start};
@@ -233,8 +257,15 @@ mod tests {
             normal: flat("normal"),
             alternate: flat("alternate"),
         };
-        Session::new(Box::new(Fixture), 0x40, 1, sets, SonicAnimation::default())
-            .expect("world setup")
+        Session::new(
+            Box::new(Fixture),
+            0x40,
+            1,
+            sets,
+            SonicAnimation::default(),
+            TailsAnimation::default(),
+        )
+        .expect("world setup")
     }
 
     #[test]

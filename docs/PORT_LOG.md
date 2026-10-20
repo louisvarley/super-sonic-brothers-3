@@ -240,6 +240,59 @@ Tests: `cargo test --workspace` -> 39 engine-core unit tests (22 of them added h
 Next: M4 objects — first the SMB3 block/goomba (`ObjectManager`, `Solid`, `TouchResponse`) to clear these four traces,
 then the remaining SMB3 and Sonic-zone objects.
 
+## 2026-10-20 — Phase 2 M4a: 1-1 objects, Tails and the four traces clear (verified)
+
+The four `smb3-1-1-playing-*` traces now match `CompareMask::MOTION` for all 600 ticks with **no pinned
+allowances** (the test asserts `compare_masked(...).is_none()` for every scenario).
+
+### Added
+* `engine-core::objects`:
+  * `manager.rs`: `ObjectsManager` (0x1B824) — the 6-byte placement-list image with the leading boundary record and
+    terminator, right/left pointers at `$F770`/`$F774`, `Init`/`Main`/`ChkLoadObj`, the respawn table
+    (`$FC00`: 16-bit counters plus one byte per "remember" record whose bit 7 means destroyed) and the 128 px
+    camera window (`camera + $280`, `camera - $80`).
+  * `mod.rs`: `RunObjects`' slot loop (`$B080-$D3FF`, `SlotCounter`, the "Sonic dying" freeze of the dynamic slots),
+    the ported-id registry, `MarkObjGone`/`DeleteObject`, `FindFreeSlot`/`FindFreeSlot2`, `ObjectMove(AndFall)`.
+  * `solid.rs`: `SolidObject`/`SolidObject_Always`, `StillOn`, the box overlap, side/top/bottom responses,
+    `SetRide`/`MoveOnPlatform`, including the wrapped-16-bit `d0` and the contact bits at 16-21.
+  * `touch.rs`: `TouchResponse` (`TouchRings`, enemy chain/points, hurt/kill, monitors, specials), `CollectRingFor`
+    (100/200-ring extra lives) and `AddPoints` (50000-point extra life).
+  * `sprites.rs`: `DisplaySprite`'s priority lists and `BuildSprites`' per-object range test, which is what sets the
+    on-screen flag object code reads (drawing itself is still M5).
+  * `smb3.rs`: `$E0` block (?/brick, bump, contents, break), `$E1/$E2` Goomba/Paragoomba (walk, block floors, hops,
+    micro-goomba flyer), `$E3/$E4` Koopa/Paratroopa (shell/kick/sliding knock-outs), `$E5` piranha (hidden/rise/out/
+    sink, 27 px check, fire timing) and `$E6` fireball.
+  * `common.rs`: spilled rings `$37`, explosion `$27`, animal `$28`, points `$29`.
+* `engine-core::rings`: `RingsManager` (0x1AD00) — group expansion + the ROM's exchange sort, the `$E800` table, the
+  sliding collect window, sparkle timers — and `SyncAnimations` (0x5EB0).
+* Tails (needed because the traces' `rings`/`score` change on *his* contacts): `TailsAnimation`
+  (`objects/tails/animations.json`), `Player::tails()`/`TailsStep`/`TailsControl`, his balance/record/water/hurt/
+  dead/respawn routines, and the full `TailsCPU_Control` state machine (Nakama follow using Sonic's 16-frame position
+  and input history, respawn/fly-in, panic spindash).
+* `LevelSource` now also exposes the object placements, list address/boundary and ring groups; `rom-assets` converts
+  them and loads Tails' animation block.
+
+### Wiring
+`World` runs `Rings.Setup`, the first `ObjectManager.Run` and `Rings.Run` after placing the players. `Session::step`
+now runs Sonic, Tails, `RunObjects` (with the pre-frame dying flag), `DeformBgLayer`, `Rings.Run`,
+`SyncAnimations`, `BuildSprites`, `ObjectManager.Run`, then VBlank (`Vint_runcount`, HUD timer). A restart rebuilds
+the act (and its object/ring tables) from the previous RAM.
+
+### Results (`cargo test -p engine-core --test player_motion -- --nocapture`)
+* `idle`, `right`, `jump`, `spindash`: **MOTION matches for all 600 ticks** (Sonic + camera + rings/score/lives).
+  The pure player/camera part of these tests is unchanged; the object layer now reproduces the Goomba kills, the
+  block side/coin hits, Tails' coin-block ring and piranha kill, the hurt ring spill and the level restarts.
+
+### Tests
+`cargo test --workspace`: 60 engine-core unit tests (21 new: object manager window/remember records, dying freeze,
+MarkObjGone, solid side/top/bottom contacts, hurt/kill/points/100th ring, coin block/bump, Goomba facing, piranha
+proximity, ring table/window, Tails history/jump cadence) + 1 `player_motion` + 2 golden-trace + 5 rom-assets.
+`cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+Next: the remaining 1-1 content (Koopa/shell edge cases are ported but only smoke-tested), then the SMB3 1-2/1-3
+objects (pipe, goomba pipe, micro goomba, boomerang, roulette goal) and the Sonic-zone object set.
+
+
 ## 2026-10-19 — Phase 2 plan (for approval)
 
 Two workstreams, per the owner's decision:
@@ -264,4 +317,4 @@ Module order and checkpoints:
 | M7 stock importer | `rom-assets`: stock Sonic 2 + SMB3 extraction, SMB3 zone builder/campaign, 6502, music conversion | byte-level comparison on the shared subset; documented deviations |
 | M8 platforms | `platform-native` (exe, static CRT), `platform-web` (WASM), `xtask` | headless replay, then window/canvas/audio |
 
-No engine code is written until this plan/layout is approved.
+Approved; implemented incrementally from M1.

@@ -1,12 +1,10 @@
 //! One act's RAM setup, the way `legacy/src/SonicBros3/Logic/Level/World.cs` does it: `LevelDataLoad`,
-//! `LevelSizeLoad`, `InitCameraValues` and the parts of `InitPlayers` that place Sonic.
+//! `LevelSizeLoad`, `InitCameraValues`, `InitPlayers` and the first `ObjectManager`/`RingsManager` pass.
 //!
 //! Everything downstream reads the 64 KiB image in [`Ram`]; the level data itself arrives through [`LevelSource`]
 //! so this crate stays free of asset I/O (the `rom-assets` crate implements the trait for its `LevelData`).
 //!
-//! Not set up here (later milestones): Tails' code, the object manager, rings, the HUD, PLCs, sprites, the SMPS
-//! driver and the title card. Their RAM is left at zero and the stubs are called out where the legacy World would
-//! have run them.
+//! Still left to later milestones: the PLC queue, the HUD, sprite art/VRAM, the SMPS driver and the title card.
 
 use crate::camera::is_easter_egg;
 use crate::player::{Player, Unported, WaterMap};
@@ -26,6 +24,27 @@ pub struct Start {
     pub y: i32,
 }
 
+/// One entry of the act's object placement list (`zones/zone_XX/act_N/objects.json`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectSpawn {
+    pub x: i32,
+    pub y: i32,
+    pub id: u8,
+    pub subtype: u8,
+    pub flip_x: bool,
+    pub flip_y: bool,
+    pub remember: bool,
+}
+
+/// One ring group (`rings.json`): `count` rings 24 px apart, horizontally or vertically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingSpawn {
+    pub x: i32,
+    pub y: i32,
+    pub count: u8,
+    pub vertical: bool,
+}
+
 /// What [`World`] needs from one act. `rom-assets` implements this for its `LevelData`.
 pub trait LevelSource {
     /// Chunks, layout, blocks, collision indexes and palette (the legacy `LevelDataLoad`).
@@ -36,13 +55,33 @@ pub trait LevelSource {
     fn water_map(&self) -> Option<WaterMap> {
         None
     }
+    /// The act's object placement list (the `ObjectsManager` records).
+    fn objects(&self) -> Vec<ObjectSpawn> {
+        Vec::new()
+    }
+    /// The list's address in the original ROM (`objects.json` `listAddress`).
+    fn object_list_address(&self) -> u32 {
+        0
+    }
+    /// The x of the record before the list (`objects.json` `boundaryX`).
+    fn object_boundary_x(&self) -> i32 {
+        0
+    }
+    /// The act's ring groups.
+    fn rings(&self) -> Vec<RingSpawn> {
+        Vec::new()
+    }
 }
 
 pub struct World {
     pub ram: Ram,
     pub sonic: Player,
+    pub tails: Player,
     /// Present when `Sonic.WaterAt` is set in the legacy World (SMB3 acts with gameplay metadata).
     pub water: Option<WaterMap>,
+    pub object_manager: crate::objects::ObjectManager,
+    pub objects: crate::objects::Objects,
+    pub rings: crate::rings::RingsManager,
 }
 
 impl World {
@@ -145,7 +184,10 @@ impl World {
             cam_y = max_y;
         }
 
-        // Rings.Setup is M4: it writes the ring table and the perfect-rings window, not the player or camera.
+        // Rings.Setup (0x1B03A): expand and sort the act's ring groups into the ring-manager table.
+        let rings_data = level.rings();
+        let mut rings = crate::rings::RingsManager::new();
+        rings.setup(&mut ram, &rings_data);
 
         if new_game {
             // A new game (title screen): 3 lives, the first extra life at 50000 points.
@@ -168,7 +210,7 @@ impl World {
         ram.w8(vars::UPDATE_HUD_RINGS, 1);
         ram.w8(vars::UPDATE_HUD_TIMER, 1);
         ram.w8(vars::UPDATE_HUD_TIMER_P2, 1);
-        // ObjectManager.Run() and Rings.Run() are the first M4 steps; they only lay out objects and the ring window.
+        // ObjectManager.Run() and Rings.Run() lay out the initial objects and the ring window.
         ram.w8(vars::LEVEL_STARTED_FLAG, 1); // ring/HUD drawing enabled
 
         // No title card (the traces record `titleCards: false`), so the controls start unlocked and game mode is
@@ -183,8 +225,24 @@ impl World {
         ram.w32(vars::COLLISION_ADDR, 0);
 
         let water = level.water_map();
+        let tails = Player::tails();
+        let mut object_manager = crate::objects::ObjectManager::new(
+            level.objects(),
+            level.object_list_address(),
+            level.object_boundary_x(),
+        );
+        object_manager.run(&mut ram); // level init runs the object manager once before the first frame
+        rings.run(&mut ram); // and lays out the ring window
 
-        Ok(Self { ram, sonic, water })
+        Ok(Self {
+            ram,
+            sonic,
+            tails,
+            water,
+            object_manager,
+            objects: crate::objects::Objects::new(),
+            rings,
+        })
     }
 
     pub fn camera_x(&self) -> i32 {

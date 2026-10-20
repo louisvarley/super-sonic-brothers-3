@@ -5,9 +5,10 @@
 //! keeps the original's 16.16 positions, 8.8 velocities and wrapping `u8`/`u16`/`i16` arithmetic. Side effects that
 //! belong to later milestones are explicit no-ops: sprite display, dynamic PLC art, sound and ring/object touching.
 
-use crate::animation::SonicAnimation;
+use crate::animation::PlayerAnimation;
 use crate::collision::{self, CollisionSets};
 use crate::math;
+use crate::objects::{sprites, touch};
 use crate::{vars, Obj, Ram};
 use std::fmt;
 
@@ -110,6 +111,7 @@ fn water_tile(set: i32, tile: u8) -> bool {
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerProfile {
     pub address: u16,
+    pub is_tails: bool,
     pub speed: u16,
     pub ctrl: u16,
     pub look_delay: u16,
@@ -126,6 +128,7 @@ pub struct PlayerProfile {
 impl PlayerProfile {
     pub const SONIC: Self = Self {
         address: vars::MAIN_CHARACTER,
+        is_tails: false,
         speed: vars::SONIC_TOP_SPEED,
         ctrl: vars::CTRL1_HELD_LOGICAL,
         look_delay: vars::SONIC_LOOK_DELAY_COUNTER,
@@ -137,6 +140,22 @@ impl PlayerProfile {
         roll_shift: 5,
         dust: vars::SONIC_DUST,
         scroll_delay: vars::HORIZ_SCROLL_DELAY_VAL,
+    };
+
+    pub const TAILS: Self = Self {
+        address: vars::SIDEKICK,
+        is_tails: true,
+        speed: vars::TAILS_TOP_SPEED,
+        ctrl: vars::CTRL2_HELD_LOGICAL,
+        look_delay: vars::TAILS_LOOK_DELAY_COUNTER,
+        camera_bias: vars::CAMERA_Y_POS_BIAS_P2,
+        cam_min_x: vars::TAILS_MIN_X_POS,
+        cam_max_x: vars::TAILS_MAX_X_POS,
+        cam_max_y: vars::TAILS_MAX_Y_POS,
+        stand_y_radius: 0x0F,
+        roll_shift: 1,
+        dust: vars::TAILS_DUST,
+        scroll_delay: vars::HORIZ_SCROLL_DELAY_VAL_P2,
     };
 }
 
@@ -161,14 +180,24 @@ impl Player {
         }
     }
 
-    /// Obj01 entry (0x1DCEE): dispatch on the routine counter; `Init` falls through into `Control`.
+    pub fn tails() -> Self {
+        Self {
+            obj: Obj::new(vars::SIDEKICK),
+            profile: PlayerProfile::TAILS,
+        }
+    }
+
+    /// Obj01/Obj02 entry: dispatch on the routine counter; `Init` falls through into `Control`.
     pub fn step(
         &mut self,
         ram: &mut Ram,
         sets: &CollisionSets,
-        animation: &SonicAnimation,
+        animation: &dyn PlayerAnimation,
         water: Option<&WaterMap>,
     ) -> Result<(), Unported> {
+        if self.profile.is_tails {
+            return self.tails_step(ram, sets, animation, water);
+        }
         match self.obj.routine(ram) {
             routine::INIT => {
                 self.init(ram);
@@ -200,7 +229,7 @@ impl Player {
     }
 
     fn is_super(&self, ram: &Ram) -> bool {
-        self.obj.id(ram) == 1 && ram.u8(vars::SUPER_SONIC_FLAG) != 0
+        !self.profile.is_tails && ram.u8(vars::SUPER_SONIC_FLAG) != 0
     }
 
     fn restart_timer(&self, ram: &Ram) -> u16 {
@@ -255,7 +284,7 @@ impl Player {
         &mut self,
         ram: &mut Ram,
         sets: &CollisionSets,
-        animation: &SonicAnimation,
+        animation: &dyn PlayerAnimation,
         water: Option<&WaterMap>,
     ) -> Result<(), Unported> {
         let o = self.obj;
@@ -286,7 +315,9 @@ impl Player {
             o.set_anim(ram, o.prev_anim(ram));
         }
         animation.animate(ram, o);
-        // TouchResponse.Run (0x43A82) needs the object system: M4.
+        if (o.obj_control(ram) as i8) >= 0 {
+            touch::run(ram, o);
+        }
         self.load_dyn_plc(ram);
         Ok(())
     }
@@ -294,10 +325,15 @@ impl Player {
     /// `LoadSonicDynPLC` (0x1F65E): only the RAM bookkeeping (art loading needs PLC/VRAM, a later milestone).
     fn load_dyn_plc(&self, ram: &mut Ram) {
         let frame = self.obj.mapping_frame(ram);
-        if frame == ram.u8(vars::SONIC_LAST_LOADED_DPLC) {
+        let last = if self.profile.is_tails {
+            vars::TAILS_LAST_LOADED_DPLC
+        } else {
+            vars::SONIC_LAST_LOADED_DPLC
+        };
+        if frame == ram.u8(last) {
             return;
         }
-        ram.w8(vars::SONIC_LAST_LOADED_DPLC, frame);
+        ram.w8(last, frame);
     }
 
     /// `Obj01_Dead` (0x1EFB4).
@@ -305,7 +341,7 @@ impl Player {
         &mut self,
         ram: &mut Ram,
         sets: &CollisionSets,
-        animation: &SonicAnimation,
+        animation: &dyn PlayerAnimation,
     ) -> Result<(), Unported> {
         let _ = sets;
         if ram.u16(vars::DEBUG_MODE_FLAG) != 0 && (ram.u8(vars::CTRL1_PRESS) & 0x10) != 0 {
@@ -316,6 +352,7 @@ impl Player {
         self.record_pos(ram);
         animation.animate(ram, self.obj);
         self.load_dyn_plc(ram);
+        sprites::display_sprite(ram, self.obj);
         Ok(())
     }
 
@@ -374,7 +411,7 @@ impl Player {
         &mut self,
         ram: &mut Ram,
         sets: &CollisionSets,
-        animation: &SonicAnimation,
+        animation: &dyn PlayerAnimation,
     ) -> Result<(), Unported> {
         let o = self.obj;
         if ram.u16(vars::DEBUG_MODE_FLAG) != 0 && (ram.u8(vars::CTRL1_PRESS) & 0x10) != 0 {
@@ -387,6 +424,7 @@ impl Player {
             self.record_pos(ram);
             animation.animate(ram, o);
             self.load_dyn_plc(ram);
+            sprites::display_sprite(ram, o);
             return Ok(());
         }
         self.object_move(ram);
@@ -558,6 +596,10 @@ impl Player {
     /// `Obj01_MdNormal_Checks` (0x1DFEE): idle animations suppress physics until input.
     fn md_normal_checks(&mut self, ram: &mut Ram, sets: &CollisionSets) {
         let o = self.obj;
+        if self.profile.is_tails {
+            self.md_normal(ram, sets); // Tails has no idle-animation check (Obj02_MdNormal_Checks)
+            return;
+        }
         if (self.pressed(ram) & BUTTON_ABC as i32) == 0 {
             let a = o.anim(ram);
             if a == anim::BLINK || a == anim::GET_UP {
@@ -669,7 +711,9 @@ impl Player {
         // Standing still: balancing and looking (0x1E126).
         o.set_pushing(ram, false);
         o.set_anim(ram, anim::WAIT);
-        let balancing = if o.on_object(ram) {
+        let balancing = if self.profile.is_tails {
+            self.tails_balance(ram, sets)
+        } else if o.on_object(ram) {
             self.balance_on_object(ram)
         } else {
             self.balance_on_ledge(ram, sets)
@@ -986,7 +1030,11 @@ impl Player {
     fn roll_speed(&mut self, ram: &mut Ram, sets: &CollisionSets) {
         let o = self.obj;
         let d5 = (ram.s16(self.profile.speed + 2) >> 1) as i32;
-        let d4 = 0x20;
+        let d4 = if self.profile.is_tails {
+            (ram.s16(self.profile.speed + 4) >> 2) as i32
+        } else {
+            0x20
+        };
         if (o.status_secondary(ram) as i8) >= 0 {
             if o.move_lock(ram) == 0 {
                 if self.held_bit(ram, LEFT) {
@@ -1323,7 +1371,7 @@ impl Player {
             if cap > o.y_vel(ram) as i32 && (self.held(ram) & BUTTON_ABC as i32) == 0 {
                 o.set_y_vel(ram, cap as i16);
             }
-            if o.y_vel(ram) >> 8 == 0 {
+            if !self.profile.is_tails && o.y_vel(ram) >> 8 == 0 {
                 self.check_super_transform(ram)?;
             }
             return Ok(());
@@ -1648,21 +1696,9 @@ impl Player {
         }
     }
 
-    /// The falling-out-of-the-level half of `KillCharacter` (0x43B44), without the sound.
+    /// The falling-out-of-the-level half of `KillCharacter` (0x43B44).
     fn fell_out(&mut self, ram: &mut Ram) {
-        let o = self.obj;
-        if ram.u16(vars::DEBUG_PLACEMENT_MODE) != 0 {
-            return;
-        }
-        o.set_status_secondary(ram, 0);
-        o.set_routine(ram, routine::DEAD);
-        Self::reset_on_floor_part2(ram, o);
-        o.set_in_air(ram, true);
-        o.set_y_vel(ram, -0x700);
-        o.set_x_vel(ram, 0);
-        o.set_inertia(ram, 0);
-        o.set_anim(ram, anim::DEATH);
-        o.set_art_tile(ram, o.art_tile(ram) | 0x8000);
+        touch::kill(ram, self.obj, self.obj);
     }
 
     // ---------------------------------------------------------------- ground collision
@@ -1845,6 +1881,646 @@ impl Player {
         o.set_angle(ram, angle);
         d1
     }
+
+    // =============================================================== Tails (Obj02, 0x1F6B8)
+
+    fn tails_step(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        animation: &dyn PlayerAnimation,
+        water: Option<&WaterMap>,
+    ) -> Result<(), Unported> {
+        match self.obj.routine(ram) {
+            routine::INIT => {
+                self.tails_init(ram)?;
+                self.tails_control(ram, sets, animation, water)
+            }
+            routine::CONTROL => self.tails_control(ram, sets, animation, water),
+            routine::HURT => self.tails_hurt(ram, sets, animation),
+            routine::DEAD => self.tails_dead(ram, sets, animation),
+            routine::GONE => {
+                self.tails_gone(ram);
+                Ok(())
+            }
+            0x0A => {
+                self.tails_respawning(ram, animation);
+                Ok(())
+            }
+            other => Err(Unported::new(0x1F6D2, format!("Obj02 routine {other}"))),
+        }
+    }
+
+    /// `Obj02_Init` (0x1F6EC), Sonic-and-Tails mode.
+    fn tails_init(&mut self, ram: &mut Ram) -> Result<(), Unported> {
+        let o = self.obj;
+        if ram.u16(vars::PLAYER_MODE) == 2 {
+            return Err(Unported::new(0x1F730, "Tails-alone mode"));
+        }
+        o.set_routine(ram, o.routine(ram).wrapping_add(2));
+        o.set_y_radius(ram, 0x0F);
+        o.set_x_radius(ram, 9);
+        o.set_mappings(ram, 0x7A6F6);
+        o.set_priority(ram, 2);
+        o.set_width_pixels(ram, 0x18);
+        o.set_render_flags(ram, 0x84);
+        self.set_normal_speeds(ram);
+        o.set_art_tile(ram, 0x7A0);
+        let sonic = Obj::new(vars::MAIN_CHARACTER);
+        o.set_solid_bits(ram, sonic.solid_bits(ram));
+        if (sonic.art_tile(ram) as i16) < 0 {
+            o.set_art_tile(ram, o.art_tile(ram) | 0x8000);
+        }
+        ram.w16(vars::SAVED_X_POS_P2, o.x(ram));
+        ram.w16(vars::SAVED_Y_POS_P2, o.y(ram));
+        ram.w16(vars::SAVED_ART_TILE_P2, o.art_tile(ram));
+        ram.w16(vars::SAVED_SOLID_BITS_P2, o.solid_bits(ram));
+        o.set_flips_remaining(ram, 0);
+        o.set_flip_speed(ram, 4);
+        o.set_air_left(ram, 0x1E);
+        ram.w16(vars::TAILS_CPU_ROUTINE, 0);
+        ram.w16(vars::TAILS_CONTROL_COUNTER, 0);
+        ram.w16(vars::TAILS_RESPAWN_COUNTER, 0);
+        ram.w8(vars::TAILS_TAILS, 5);
+        ram.w16(vars::TAILS_TAILS.wrapping_add(0x3E), o.address());
+        Ok(())
+    }
+
+    /// `Obj02_Control` (0x1F7C8).
+    fn tails_control(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        animation: &dyn PlayerAnimation,
+        water: Option<&WaterMap>,
+    ) -> Result<(), Unported> {
+        let o = self.obj;
+        self.water(ram, water)?;
+        if ram.u8(vars::CONTROL_LOCKED_P2) == 0 {
+            ram.w16(vars::CTRL2_HELD_LOGICAL, ram.u16(vars::CTRL2_HELD));
+        }
+        if ram.u16(vars::TWO_PLAYER_MODE) == 0 {
+            self.tails_cpu(ram)?;
+        }
+        if (o.obj_control(ram) & 1) == 0 {
+            match o.status(ram) & 6 {
+                0 => self.md_normal(ram, sets),
+                2 => self.md_air(ram, sets, water)?,
+                4 => self.md_roll(ram, sets),
+                _ => self.md_air(ram, sets, water)?,
+            }
+        }
+        if ram.u16(vars::CAMERA_MIN_Y_POS) == 0xFF00 {
+            o.set_y(ram, o.y(ram) & 0x7FF);
+        }
+        self.display(ram);
+        self.tails_record_pos(ram);
+        self.water(ram, water)?;
+        o.set_next_tilt_copy(ram, ram.u8(vars::PRIMARY_ANGLE));
+        o.set_tilt_copy(ram, ram.u8(vars::SECONDARY_ANGLE));
+        if ram.bit(vars::WIND_TUNNEL_FLAG, 1) && o.anim(ram) == anim::WALK {
+            o.set_anim(ram, o.prev_anim(ram));
+        }
+        animation.animate(ram, o);
+        if (o.obj_control(ram) as i8) >= 0 {
+            touch::run(ram, o);
+        }
+        self.load_dyn_plc(ram);
+        Ok(())
+    }
+
+    /// 0x1FF2E/0x1FF78: Tails' simpler balancing (no Super or fall-off variants).
+    fn tails_balance(&mut self, ram: &mut Ram, sets: &CollisionSets) -> bool {
+        let o = self.obj;
+        if o.on_object(ram) {
+            let obj = o.interact_object(ram);
+            if (obj.status(ram) as i8) < 0 {
+                return false;
+            }
+            let mut d1 = obj.width_pixels(ram) as i32;
+            let d2 = d1 * 2 - 4;
+            d1 = (d1 + o.x(ram) as i32 - obj.x(ram) as i32) as i16 as i32;
+            if d1 < 4 {
+                o.set_facing_left(ram, true);
+                o.set_anim(ram, anim::BALANCE);
+                return true;
+            }
+            if d1 >= d2 {
+                o.set_facing_left(ram, false);
+                o.set_anim(ram, anim::BALANCE);
+                return true;
+            }
+            return false;
+        }
+        if collision::floor_edge(ram, sets, o, o.x(ram) as i32).0 < 0x0C {
+            return false;
+        }
+        if o.next_tilt_copy(ram) == 3 {
+            o.set_facing_left(ram, false);
+            o.set_anim(ram, anim::BALANCE);
+            return true;
+        }
+        if o.tilt_copy(ram) == 3 {
+            o.set_facing_left(ram, true);
+            o.set_anim(ram, anim::BALANCE);
+            return true;
+        }
+        false
+    }
+
+    /// `Tails_RecordPos` (0x1FD6E): his own position history at `$E600`.
+    fn tails_record_pos(&self, ram: &mut Ram) {
+        let index = ram.u16(vars::TAILS_POS_RECORD_INDEX);
+        ram.w16(
+            vars::TAILS_POS_RECORD_BUF.wrapping_add(index),
+            self.obj.x(ram),
+        );
+        ram.w16(
+            vars::TAILS_POS_RECORD_BUF
+                .wrapping_add(index)
+                .wrapping_add(2),
+            self.obj.y(ram),
+        );
+        ram.w8(
+            vars::TAILS_POS_RECORD_INDEX.wrapping_add(1),
+            ram.u8(vars::TAILS_POS_RECORD_INDEX.wrapping_add(1))
+                .wrapping_add(4),
+        );
+    }
+
+    /// `Obj02_Hurt` (0x20A26).
+    fn tails_hurt(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        animation: &dyn PlayerAnimation,
+    ) -> Result<(), Unported> {
+        let o = self.obj;
+        self.object_move(ram);
+        o.set_y_vel(ram, o.y_vel(ram).wrapping_add(0x30));
+        if o.underwater(ram) {
+            o.set_y_vel(ram, o.y_vel(ram).wrapping_sub(0x20));
+        }
+        if ram.u16(vars::CAMERA_MIN_Y_POS) == 0xFF00 {
+            o.set_y(ram, o.y(ram) & 0x7FF);
+        }
+        if self.tails_hurt_stop(ram, sets) {
+            return Ok(());
+        }
+        self.level_bound(ram)?;
+        self.tails_record_pos(ram);
+        animation.animate(ram, o);
+        self.load_dyn_plc(ram);
+        sprites::display_sprite(ram, o);
+        Ok(())
+    }
+
+    /// `Tails_HurtStop` (0x20A68). True when he was killed (the original jumps away).
+    fn tails_hurt_stop(&mut self, ram: &mut Ram, sets: &CollisionSets) -> bool {
+        let o = self.obj;
+        let bottom = ram.u16(self.profile.cam_max_y).wrapping_add(0xE0) as i16;
+        if bottom < o.y(ram) as i16 {
+            self.fell_out(ram);
+            return true;
+        }
+        self.do_level_collision(ram, sets);
+        if o.in_air(ram) {
+            return false;
+        }
+        o.set_y_vel(ram, 0);
+        o.set_x_vel(ram, 0);
+        o.set_inertia(ram, 0);
+        o.set_obj_control(ram, 0);
+        o.set_anim(ram, anim::WALK);
+        o.set_routine(ram, routine::CONTROL);
+        o.set_invulnerable_time(ram, 0x78);
+        o.set_spindash_flag(ram, 0);
+        false
+    }
+
+    /// `Obj02_Dead` (0x20AB0).
+    fn tails_dead(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        animation: &dyn PlayerAnimation,
+    ) -> Result<(), Unported> {
+        let _ = sets;
+        self.tails_game_over_check(ram)?;
+        self.object_move_and_fall(ram);
+        self.tails_record_pos(ram);
+        animation.animate(ram, self.obj);
+        self.load_dyn_plc(ram);
+        sprites::display_sprite(ram, self.obj);
+        Ok(())
+    }
+
+    /// 0x20ACC.
+    fn tails_game_over_check(&mut self, ram: &mut Ram) -> Result<(), Unported> {
+        if ram.u16(vars::PLAYER_MODE) == 2 {
+            return Err(Unported::new(0x1EFEA, "Tails-alone game over"));
+        }
+        ram.w8(vars::SCROLL_LOCK_P2, 1);
+        self.obj.set_spindash_flag(ram, 0);
+        let limit = ram.u16(self.profile.cam_max_y).wrapping_add(0x100) as i16;
+        if limit >= self.obj.y(ram) as i16 {
+            return Ok(());
+        }
+        self.obj.set_routine(ram, routine::CONTROL);
+        if ram.u16(vars::TWO_PLAYER_MODE) != 0 {
+            return Err(Unported::new(0x20B02, "Tails' death in 2-player mode"));
+        }
+        self.cpu_respawn(ram);
+        Ok(())
+    }
+
+    /// Routine 8 (0x20BF0).
+    fn tails_gone(&mut self, ram: &mut Ram) {
+        self.gone(ram);
+    }
+
+    /// Routine `$A` (0x20C04).
+    fn tails_respawning(&mut self, ram: &mut Ram, animation: &dyn PlayerAnimation) {
+        if ram.u16(vars::CAMERA_X_POS_DIFF_P2) == 0 && ram.u16(vars::CAMERA_Y_POS_DIFF_P2) == 0 {
+            self.obj.set_routine(ram, routine::CONTROL);
+        }
+        animation.animate(ram, self.obj);
+        self.load_dyn_plc(ram);
+        sprites::display_sprite(ram, self.obj);
+    }
+
+    // =============================================================== TailsCPU_Control (0x1F8EA)
+
+    fn tails_cpu(&mut self, ram: &mut Ram) -> Result<(), Unported> {
+        if (ram.u8(vars::CTRL2_HELD) & 0x7F) != 0 {
+            ram.w16(vars::TAILS_CONTROL_COUNTER, 0x258); // player 2 took over: 10 s
+        }
+        match ram.u16(vars::TAILS_CPU_ROUTINE) {
+            0 => self.cpu_init(ram),
+            2 => self.cpu_wait_to_spawn(ram),
+            4 => self.cpu_fly_in(ram),
+            6 => self.cpu_follow(ram),
+            8 => self.cpu_panic(ram),
+            other => return Err(Unported::new(0x1F902, format!("TailsCPU routine {other}"))),
+        }
+        Ok(())
+    }
+
+    /// 0x1F914.
+    fn cpu_init(&mut self, ram: &mut Ram) {
+        let o = self.obj;
+        ram.w16(vars::TAILS_CPU_ROUTINE, 6);
+        o.set_obj_control(ram, 0);
+        o.set_anim(ram, anim::WALK);
+        o.set_x_vel(ram, 0);
+        o.set_y_vel(ram, 0);
+        o.set_inertia(ram, 0);
+        o.set_status(ram, 0);
+        ram.w16(vars::TAILS_RESPAWN_COUNTER, 0);
+    }
+
+    /// 0x1F946: wait (every 64 frames, Sonic on the ground and free) before flying in.
+    fn cpu_wait_to_spawn(&mut self, ram: &mut Ram) {
+        let o = self.obj;
+        let sonic = Obj::new(vars::MAIN_CHARACTER);
+        if (ram.u8(self.profile.ctrl) & 0xF0) == 0 {
+            if (ram.u16(vars::LEVEL_FRAME_COUNTER) & 0x3F) != 0 {
+                return;
+            }
+            if sonic.obj_control(ram) != 0 {
+                return;
+            }
+            if (sonic.status(ram) & 0xD2) != 0 {
+                return;
+            }
+        }
+        ram.w16(vars::TAILS_CPU_ROUTINE, 4);
+        o.set_x(ram, sonic.x(ram));
+        ram.w16(vars::TAILS_CPU_TARGET_X, sonic.x(ram));
+        ram.w16(vars::TAILS_CPU_TARGET_Y, sonic.y(ram));
+        o.set_y(ram, sonic.y(ram).wrapping_sub(0xC0));
+        o.set_art_tile(ram, o.art_tile(ram) | 0x8000);
+        o.set_spindash_flag(ram, 0);
+        o.set_spindash_counter(ram, 0);
+    }
+
+    /// 0x1F9A0: fly toward where Sonic was 16 frames ago; land when there.
+    fn cpu_fly_in(&mut self, ram: &mut Ram) {
+        let o = self.obj;
+        if (o.render_flags(ram) as i8) < 0 {
+            ram.w16(vars::TAILS_RESPAWN_COUNTER, 0);
+        } else {
+            let r = ram.u16(vars::TAILS_RESPAWN_COUNTER).wrapping_add(1);
+            ram.w16(vars::TAILS_RESPAWN_COUNTER, r);
+            if r >= 0x12C {
+                ram.w16(vars::TAILS_RESPAWN_COUNTER, 0);
+                ram.w16(vars::TAILS_CPU_ROUTINE, 2);
+                o.set_obj_control(ram, 0x81);
+                o.set_status(ram, 2);
+                o.set_x(ram, 0);
+                o.set_y(ram, 0);
+                o.set_anim(ram, 0x20); // TailsFly
+                return;
+            }
+        }
+        let d3 = history_index(ram);
+        ram.w16(
+            vars::TAILS_CPU_TARGET_X,
+            ram.u16(vars::SONIC_POS_RECORD_BUF.wrapping_add(d3)),
+        );
+        ram.w16(
+            vars::TAILS_CPU_TARGET_Y,
+            ram.u16(vars::SONIC_POS_RECORD_BUF.wrapping_add(d3).wrapping_add(2)),
+        );
+        if ram.u8(vars::WATER_FLAG) != 0 {
+            let limit = ram.s16(vars::WATER_LEVEL1).wrapping_sub(0x10);
+            let target_y = ram.u16(vars::TAILS_CPU_TARGET_Y);
+            if limit < target_y as i16 {
+                ram.w16(vars::TAILS_CPU_TARGET_Y, limit as u16);
+            }
+        }
+
+        let target_x = ram.u16(vars::TAILS_CPU_TARGET_X);
+        let mut d0 = o.x(ram).wrapping_sub(target_x) as i16 as i32;
+        if d0 != 0 {
+            let mut d2 = (d0.unsigned_abs() >> 4) as i32;
+            if d2 >= 0x0C {
+                d2 = 0x0C;
+            }
+            let sonic = Obj::new(vars::MAIN_CHARACTER);
+            let mut d1 = (sonic.x_vel(ram) >> 8) as i32;
+            if d1 < 0 {
+                d1 = -d1;
+            }
+            d2 = ((d2 & 0xFF00) | ((d2 + d1) & 0xFF)) + 1;
+            if d0 >= 0 {
+                o.set_facing_left(ram, true);
+                if d2 >= d0 {
+                    d2 = d0;
+                    d0 = 0;
+                }
+                d2 = -d2;
+            } else {
+                o.set_facing_left(ram, false);
+                d0 = -d0;
+                if d2 >= d0 {
+                    d2 = (d2 & 0xFF00) | (d0 & 0xFF);
+                    d0 = 0;
+                }
+            }
+            o.set_x(ram, (o.x(ram) as i32 + d2) as u16);
+        }
+        let target_y = ram.u16(vars::TAILS_CPU_TARGET_Y);
+        let dy = o.y(ram).wrapping_sub(target_y) as i16 as i32;
+        if dy != 0 {
+            o.set_y(ram, (o.y(ram) as i32 + if dy > 0 { -1 } else { 1 }) as u16);
+        }
+
+        if ram.u8(vars::SPECIAL_STAGE_REQUESTED) == 0 {
+            let recorded_status =
+                ram.u8(vars::SONIC_STAT_RECORD_BUF.wrapping_add(d3).wrapping_add(2));
+            if (recorded_status & 0xD2) != 0 {
+                return;
+            }
+            if (d0 | dy) != 0 {
+                return;
+            }
+        }
+        // Arrived (0x1FA96).
+        ram.w16(vars::TAILS_CPU_ROUTINE, 6);
+        o.set_obj_control(ram, 0);
+        o.set_anim(
+            ram,
+            if ram.u8(vars::SPECIAL_STAGE_REQUESTED) != 0 {
+                2
+            } else {
+                0
+            },
+        );
+        o.set_x_vel(ram, 0);
+        o.set_y_vel(ram, 0);
+        o.set_inertia(ram, 0);
+        o.set_status(ram, 2);
+        o.set_move_lock(ram, 0);
+        o.set_art_tile(ram, o.art_tile(ram) & 0x7FFF);
+        let sonic = Obj::new(vars::MAIN_CHARACTER);
+        if (sonic.art_tile(ram) as i16) < 0 {
+            o.set_art_tile(ram, o.art_tile(ram) | 0x8000);
+        }
+        o.set_top_solid_bit(ram, sonic.top_solid_bit(ram));
+        o.set_lrb_solid_bit(ram, sonic.lrb_solid_bit(ram));
+        if sonic.anim(ram) == anim::SPINDASH {
+            return;
+        }
+        let dash = o.spindash_flag(ram);
+        if dash == 0 {
+            return;
+        }
+        sonic.set_spindash_flag(ram, dash);
+        // 0x25318: put Sonic into his rolling state.
+        if sonic.rolling(ram) {
+            return;
+        }
+        sonic.set_rolling(ram, true);
+        sonic.set_y_radius(ram, 0x0E);
+        sonic.set_x_radius(ram, 7);
+        sonic.set_anim(ram, anim::ROLL);
+        sonic.set_y(ram, sonic.y(ram).wrapping_add(5));
+    }
+
+    /// 0x1FB08: follow Sonic by replaying his recorded input with corrections; jump when he is above.
+    fn cpu_follow(&mut self, ram: &mut Ram) {
+        let o = self.obj;
+        let sonic = Obj::new(vars::MAIN_CHARACTER);
+        if sonic.routine(ram) >= 6 {
+            ram.w16(vars::TAILS_CPU_ROUTINE, 4);
+            o.set_spindash_flag(ram, 0);
+            o.set_spindash_counter(ram, 0);
+            o.set_obj_control(ram, 0x81);
+            o.set_status(ram, 2);
+            o.set_anim(ram, 0x20);
+            return;
+        }
+        self.cpu_stuck_check(ram);
+        if ram.u16(vars::TAILS_CONTROL_COUNTER) != 0 || (o.obj_control(ram) as i8) < 0 {
+            self.cpu_manual_countdown(ram);
+            return;
+        }
+        if ram.u8(vars::SPECIAL_STAGE_REQUESTED) != 0 {
+            ram.w16(self.profile.ctrl, 0x0808);
+            return;
+        }
+        if o.move_lock(ram) != 0 && o.inertia(ram) == 0 {
+            ram.w16(vars::TAILS_CPU_ROUTINE, 8);
+        }
+
+        let d0 = history_index(ram);
+        let mut d2 = ram
+            .u16(vars::SONIC_POS_RECORD_BUF.wrapping_add(d0))
+            .wrapping_sub(o.x(ram)) as i16 as i32;
+        let d3 = ram.u16(vars::SONIC_POS_RECORD_BUF.wrapping_add(d0).wrapping_add(2));
+        let mut d1 = ram.u16(vars::SONIC_STAT_RECORD_BUF.wrapping_add(d0));
+        let d4 = ram.u8(vars::SONIC_STAT_RECORD_BUF.wrapping_add(d0).wrapping_add(2));
+
+        let skip_x = o.pushing(ram) && (d4 & 0x20) == 0;
+        if skip_x {
+            Self::cpu_maybe_jump(ram, &mut d1);
+            ram.w16(self.profile.ctrl, d1);
+            return;
+        }
+        if d2 == 0 {
+            o.set_facing_left(ram, false);
+            if (d4 & 1) != 0 {
+                o.set_facing_left(ram, true);
+            }
+        } else if d2 < 0 {
+            d2 = -d2;
+            if d2 >= 0x10 {
+                d1 = (d1 & 0xF3F3) | 0x0404;
+            }
+            if o.inertia(ram) != 0 && o.facing_left(ram) {
+                o.set_x(ram, o.x(ram).wrapping_sub(1));
+            }
+        } else {
+            if d2 >= 0x10 {
+                d1 = (d1 & 0xF3F3) | 0x0808;
+            }
+            if o.inertia(ram) != 0 && !o.facing_left(ram) {
+                o.set_x(ram, o.x(ram).wrapping_add(1));
+            }
+        }
+        if ram.u8(vars::TAILS_CPU_JUMPING) != 0 {
+            d1 |= 0x7000;
+            if o.in_air(ram) {
+                ram.w16(self.profile.ctrl, d1);
+                return;
+            }
+            ram.w8(vars::TAILS_CPU_JUMPING, 0);
+        }
+        if (ram.u16(vars::LEVEL_FRAME_COUNTER) & 0xFF) != 0 && (d2 as u32 & 0xFFFF) >= 0x40 {
+            ram.w16(self.profile.ctrl, d1);
+            return;
+        }
+        let dy = d3.wrapping_sub(o.y(ram)) as i16 as i32;
+        if dy >= 0 {
+            ram.w16(self.profile.ctrl, d1);
+            return;
+        }
+        if -dy < 0x20 {
+            ram.w16(self.profile.ctrl, d1);
+            return;
+        }
+        Self::cpu_maybe_jump(ram, &mut d1);
+        ram.w16(self.profile.ctrl, d1);
+    }
+
+    /// 0x1FC3C: every 64 frames, unless ducking, press jump.
+    fn cpu_maybe_jump(ram: &mut Ram, d1: &mut u16) {
+        if (ram.u8(vars::LEVEL_FRAME_COUNTER.wrapping_add(1)) & 0x3F) != 0 {
+            return;
+        }
+        let o = Obj::new(vars::SIDEKICK);
+        if o.anim(ram) == anim::DUCK {
+            return;
+        }
+        *d1 |= 0x7070;
+        ram.w8(vars::TAILS_CPU_JUMPING, 1);
+    }
+
+    fn cpu_manual_countdown(&mut self, ram: &mut Ram) {
+        let counter = ram.u16(vars::TAILS_CONTROL_COUNTER);
+        if counter != 0 {
+            ram.w16(vars::TAILS_CONTROL_COUNTER, counter - 1);
+        }
+    }
+
+    /// 0x1FC9C: off screen for 300 frames (or the object he stood on changed) -> respawn.
+    fn cpu_stuck_check(&mut self, ram: &mut Ram) {
+        let o = self.obj;
+        if (o.render_flags(ram) as i8) < 0 {
+            ram.w16(vars::TAILS_RESPAWN_COUNTER, 0);
+        } else {
+            if o.on_object(ram) {
+                let obj = o.interact_object(ram);
+                if ram.u8(vars::TAILS_INTERACT_ID) != obj.id(ram) {
+                    self.cpu_respawn(ram);
+                    return;
+                }
+            }
+            let r = ram.u16(vars::TAILS_RESPAWN_COUNTER).wrapping_add(1);
+            ram.w16(vars::TAILS_RESPAWN_COUNTER, r);
+            if r >= 0x12C {
+                self.cpu_respawn(ram);
+                return;
+            }
+        }
+        let id = o.interact_object(ram).id(ram);
+        ram.w8(vars::TAILS_INTERACT_ID, id);
+    }
+
+    /// 0x1FC6A: take Tails off the field; the CPU flies him back in.
+    fn cpu_respawn(&mut self, ram: &mut Ram) {
+        let o = self.obj;
+        ram.w16(vars::TAILS_CONTROL_COUNTER, 0);
+        ram.w16(vars::TAILS_RESPAWN_COUNTER, 0);
+        ram.w16(vars::TAILS_CPU_ROUTINE, 2);
+        o.set_obj_control(ram, 0x81);
+        o.set_status(ram, 2);
+        o.set_x(ram, 0x4000);
+        o.set_y(ram, 0);
+        o.set_anim(ram, 0x20);
+    }
+
+    /// 0x1FCEE: stuck against something: duck and spindash toward Sonic.
+    fn cpu_panic(&mut self, ram: &mut Ram) {
+        let o = self.obj;
+        self.cpu_stuck_check(ram);
+        if ram.u16(vars::TAILS_CONTROL_COUNTER) != 0 {
+            return;
+        }
+        if o.move_lock(ram) != 0 {
+            return;
+        }
+        let sonic = Obj::new(vars::MAIN_CHARACTER);
+        if o.spindash_flag(ram) != 0 {
+            ram.w16(self.profile.ctrl, 0x0202);
+            let t = ram.u8(vars::LEVEL_FRAME_COUNTER.wrapping_add(1)) & 0x7F;
+            if t == 0 {
+                ram.w16(self.profile.ctrl, 0);
+                ram.w16(vars::TAILS_CPU_ROUTINE, 6);
+                return;
+            }
+            if (t & 0x1F) == 0 {
+                let ctrl = ram.u16(self.profile.ctrl);
+                ram.w16(self.profile.ctrl, ctrl | 0x7070);
+            }
+            return;
+        }
+        if o.inertia(ram) != 0 {
+            return;
+        }
+        o.set_facing_left(ram, false);
+        if o.x(ram) >= sonic.x(ram) {
+            o.set_facing_left(ram, true);
+        }
+        ram.w16(self.profile.ctrl, 0x0202);
+        if (ram.u8(vars::LEVEL_FRAME_COUNTER.wrapping_add(1)) & 0x7F) == 0 {
+            ram.w16(self.profile.ctrl, 0);
+            ram.w16(vars::TAILS_CPU_ROUTINE, 6);
+            return;
+        }
+        if o.anim(ram) != anim::DUCK {
+            return;
+        }
+        ram.w16(self.profile.ctrl, 0x7272);
+    }
+}
+
+/// Index of the position-history entry 16 frames back (byte arithmetic, as `HistoryIndex`).
+fn history_index(ram: &Ram) -> u16 {
+    let d2 = ((0x10u16 << 2) + 4) & 0xFF;
+    let index = ram.u16(vars::SONIC_POS_RECORD_INDEX);
+    (index & 0xFF00) | (index.wrapping_sub(d2) & 0xFF)
 }
 
 #[derive(Clone, Copy)]
@@ -2087,5 +2763,33 @@ mod tests {
         assert!(!o.underwater(&ram));
         assert_eq!(o.y_vel(&ram), -0x600);
         assert_eq!(ram.u16(vars::SONIC_TOP_SPEED), 0x600);
+    }
+
+    #[test]
+    fn tails_history_index_is_byte_arithmetic() {
+        let mut ram = Ram::new();
+        ram.w16(vars::SONIC_POS_RECORD_INDEX, 0x0044);
+        assert_eq!(history_index(&ram), 0x0000);
+        ram.w16(vars::SONIC_POS_RECORD_INDEX, 0x0050);
+        assert_eq!(history_index(&ram), 0x000C);
+        ram.w16(vars::SONIC_POS_RECORD_INDEX, 0x0144);
+        assert_eq!(history_index(&ram), 0x0100);
+    }
+
+    #[test]
+    fn tails_cpu_presses_jump_every_64_frames() {
+        let mut ram = Ram::new();
+        ram.w16(vars::LEVEL_FRAME_COUNTER, 0x40); // low byte $40: the $3F mask is zero
+        let mut d1 = 0u16;
+        Player::cpu_maybe_jump(&mut ram, &mut d1);
+        assert_eq!(d1, 0x7070);
+        assert_eq!(ram.u8(vars::TAILS_CPU_JUMPING), 1);
+
+        ram.w8(vars::TAILS_CPU_JUMPING, 0);
+        ram.w16(vars::LEVEL_FRAME_COUNTER, 0x41);
+        let mut d2 = 0u16;
+        Player::cpu_maybe_jump(&mut ram, &mut d2);
+        assert_eq!(d2, 0);
+        assert_eq!(ram.u8(vars::TAILS_CPU_JUMPING), 0);
     }
 }
