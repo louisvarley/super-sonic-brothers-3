@@ -38,7 +38,7 @@ pub fn solid_object(
     d2: i32,
     d3: i32,
     d4: i32,
-) -> SolidResult {
+) -> Result<SolidResult, crate::player::Unported> {
     let mut d6 = 3;
     let r = per_player(
         ram,
@@ -51,10 +51,10 @@ pub fn solid_object(
         d4,
         &mut d6,
         true,
-    );
+    )?;
     if (ram.u8(vars::SIDEKICK + 1) as i8) >= 0 || (o.render_flags(ram) as i8) >= 0 {
         let _ = r;
-        return SolidResult { d4, d6 };
+        return Ok(SolidResult { d4, d6 });
     }
     d6 = (d6 & !0xFF) | ((d6 + 1) & 0xFF);
     let r = per_player(
@@ -68,8 +68,8 @@ pub fn solid_object(
         d4,
         &mut d6,
         true,
-    );
-    SolidResult { d4: r, d6 }
+    )?;
+    Ok(SolidResult { d4: r, d6 })
 }
 
 /// `SolidObject_Always` (0x1D516): no on-screen test.
@@ -81,7 +81,7 @@ pub fn solid_object_always(
     d2: i32,
     d3: i32,
     d4: i32,
-) -> SolidResult {
+) -> Result<SolidResult, crate::player::Unported> {
     let mut d6 = 3;
     per_player(
         ram,
@@ -94,7 +94,7 @@ pub fn solid_object_always(
         d4,
         &mut d6,
         false,
-    );
+    )?;
     d6 = (d6 & !0xFF) | ((d6 + 1) & 0xFF);
     per_player(
         ram,
@@ -107,8 +107,8 @@ pub fn solid_object_always(
         d4,
         &mut d6,
         false,
-    );
-    SolidResult { d4: 0, d6 }
+    )?;
+    Ok(SolidResult { d4: 0, d6 })
 }
 
 /// The per-player body of `SolidObject_Always` (0x1D52C).
@@ -124,18 +124,18 @@ fn per_player(
     d4: i32,
     d6: &mut i32,
     on_screen_test: bool,
-) -> i32 {
+) -> Result<i32, crate::player::Unported> {
     if !bit(ram, o.address().wrapping_add(0x22), *d6) {
         if on_screen_test && (o.render_flags(ram) as i8) >= 0 {
-            return not_touching(ram, o, p, d6);
+            return Ok(not_touching(ram, o, p, d6));
         }
         return solid_object_cont(ram, sets, o, p, d1, d2, d3, d6);
     }
     if !still_on(ram, o, p, d1, *d6) {
-        return 0;
+        return Ok(0);
     }
     move_on_platform(ram, o, p, d4, d3);
-    0
+    Ok(0)
 }
 
 /// The standing check shared by every entry point (`StillOn`).
@@ -164,25 +164,25 @@ fn solid_object_cont(
     d2: i32,
     _d3: i32,
     d6: &mut i32,
-) -> i32 {
+) -> Result<i32, crate::player::Unported> {
     let _ = sets;
     let mut d0 = (p.x(ram) as i32 - o.x(ram) as i32 + d1) & 0xFFFF;
     if (d0 as i16) < 0 {
-        return not_touching(ram, o, p, d6);
+        return Ok(not_touching(ram, o, p, d6));
     }
     let d3 = (d1 * 2) & 0xFFFF;
     if d0 > d3 {
-        return not_touching(ram, o, p, d6);
+        return Ok(not_touching(ram, o, p, d6));
     }
     let d2 = (d2 + p.y_radius(ram) as i32) & 0xFFFF;
     let mut d3 = (p.y(ram) as i32 - o.y(ram) as i32 + 4 + d2) & 0xFFFF;
     if (d3 as i16) < 0 {
-        return not_touching(ram, o, p, d6);
+        return Ok(not_touching(ram, o, p, d6));
     }
     d3 &= 0x7FF;
     let d4 = (d2 * 2) & 0xFFFF;
     if d3 >= d4 {
-        return not_touching(ram, o, p, d6);
+        return Ok(not_touching(ram, o, p, d6));
     }
     d0 &= 0xFFFF;
     touching(ram, o, p, d0, d1, d2, d3, d4, d6)
@@ -200,12 +200,12 @@ fn touching(
     d3: i32,
     d4: i32,
     d6: &mut i32,
-) -> i32 {
+) -> Result<i32, crate::player::Unported> {
     if (p.obj_control(ram) as i8) < 0 {
-        return not_touching(ram, o, p, d6);
+        return Ok(not_touching(ram, o, p, d6));
     }
     if p.routine(ram) >= 6 || ram.u16(vars::DEBUG_PLACEMENT_MODE) != 0 {
-        return 0;
+        return Ok(0);
     }
     let mut d5 = d0;
     let mut d0 = d0;
@@ -224,7 +224,7 @@ fn touching(
     if d5 > d1v {
         return vertical(ram, o, p, d0, d1v, d3v, d6);
     }
-    side(ram, o, p, d0, d1v, d6)
+    Ok(side(ram, o, p, d0, d1v, d6))
 }
 
 /// 0x1D808: side contact (or a shallow overlap of at most 4 px, which only clears pushing).
@@ -257,28 +257,40 @@ pub fn side(ram: &mut Ram, o: Obj, p: Obj, d0: i32, d1: i32, d6: &mut i32) -> i3
 }
 
 /// 0x1D88C: top (landing) or bottom contact.
-fn vertical(ram: &mut Ram, o: Obj, p: Obj, d0: i32, d1: i32, d3: i32, d6: &mut i32) -> i32 {
+fn vertical(
+    ram: &mut Ram,
+    o: Obj,
+    p: Obj,
+    d0: i32,
+    d1: i32,
+    d3: i32,
+    d6: &mut i32,
+) -> Result<i32, crate::player::Unported> {
     if (d3 as i16) >= 0 {
         if d3 < 0x10 || (o.id(ram) == 0x85 && d3 < 0x14) {
-            return land(ram, o, p, d3, d6);
+            return Ok(land(ram, o, p, d3, d6));
         }
-        return not_touching(ram, o, p, d6);
+        return Ok(not_touching(ram, o, p, d6));
     }
     if p.y_vel(ram) == 0 {
         if !p.in_air(ram) {
             let d4 = (d0 as i16).unsigned_abs() as i32;
             if d4 < 0x10 {
-                return side(ram, o, p, d0, d1, d6);
+                return Ok(side(ram, o, p, d0, d1, d6));
             }
-            // 0x1D8E0: crushed by a solid object (KillCharacter). The SMB3 1-1 objects never do this.
-            return 0;
+            // 0x1D8E0: the legacy throws here (KillCharacter is unported in Solid); the level session stops
+            // at this point and freezes. Reproduce that stop rather than inventing a death response.
+            return Err(crate::player::Unported::new(
+                0x1D8E0,
+                "crushed by a solid object (KillCharacter)",
+            ));
         }
     } else if p.y_vel(ram) < 0 && (d3 as i16) < 0 {
         p.set_y(ram, (p.y(ram) as i32 - d3) as u16);
         p.set_y_vel(ram, 0);
     }
     *d6 |= 1 << ((*d6 + 0x0F) & 31);
-    -2
+    Ok(-2)
 }
 
 /// 0x1D8F4: land on top if within the object's width ($19) and not moving up.
@@ -403,7 +415,7 @@ mod tests {
         let o = block(&mut ram);
         let p = sonic(&mut ram, 120, 100);
         p.set_x_vel(&mut ram, 0x100);
-        let r = solid_object(&mut ram, &sets, o, 0x1B, 8, 9, 100);
+        let r = solid_object(&mut ram, &sets, o, 0x1B, 8, 9, 100).expect("solid");
         // $120 - $100 + $1B = $2F, so d0 (= -7 after the width subtraction) wraps and p.X becomes $7F.
         assert_eq!(p.x(&ram), 0x7F);
         assert_eq!(
@@ -423,7 +435,7 @@ mod tests {
         let o = block(&mut ram);
         let p = sonic(&mut ram, 100, 80);
         p.set_y_vel(&mut ram, 0x100);
-        let r = solid_object(&mut ram, &sets, o, 0x1B, 8, 9, 100);
+        let r = solid_object(&mut ram, &sets, o, 0x1B, 8, 9, 100).expect("solid");
         assert_eq!(p.y(&ram), 72);
         assert!(p.on_object(&ram));
         assert_eq!(p.interact(&ram) as i32, Objects::slot_index(o.address()));
@@ -438,9 +450,25 @@ mod tests {
         let o = block(&mut ram);
         let p = sonic(&mut ram, 100, 120);
         p.set_y_vel(&mut ram, -0x100);
-        let r = solid_object(&mut ram, &sets, o, 0x1B, 8, 9, 100);
+        let r = solid_object(&mut ram, &sets, o, 0x1B, 8, 9, 100).expect("solid");
         assert_eq!(p.y(&ram), 0x7F);
         assert_eq!(p.y_vel(&ram), 0);
         assert_ne!(r.d6 & (1 << 18), 0, "Sonic hit it from below");
+    }
+
+    #[test]
+    fn a_crush_is_the_legacy_unported_stop() {
+        let sets = sets();
+        let mut ram = Ram::new();
+        let o = block(&mut ram);
+        let p = sonic(&mut ram, 100, 120);
+        p.set_y_vel(&mut ram, 0);
+        let error = solid_object(&mut ram, &sets, o, 0x1B, 8, 9, 100).unwrap_err();
+        assert_eq!(error.address, 0x1D8E0);
+        assert_eq!(
+            p.routine(&ram),
+            2,
+            "the throw happens before any death response"
+        );
     }
 }

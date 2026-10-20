@@ -292,8 +292,60 @@ proximity, ring table/window, Tails history/jump cadence) + 1 `player_motion` + 
 Next: the remaining 1-1 content (Koopa/shell edge cases are ported but only smoke-tested), then the SMB3 1-2/1-3
 objects (pipe, goomba pipe, micro goomba, boomerang, roulette goal) and the Sonic-zone object set.
 
+## 2026-10-20 — Phase 2 M4b: SMB3 World 1-2 and 1-3 clear (verified)
 
-## 2026-10-19 — Phase 2 plan (for approval)
+### New traces (generator, committed)
+`tools/golden/generate.mjs` now also records `smb3-1-2-playing-{idle,right,jump,spindash}` (zone `$41`) and the same
+four for `smb3-1-3` (`$42`): 600 ticks, `noTitleCard: true`, scripts `idle`/`right0`/`jump0`/`spindash0`. Generated
+with `node tools/golden/generate.mjs --only smb3-1-2-playing` and `--only smb3-1-3-playing`; the manifest merges the
+eight new entries (only `legacyCommit` and the new entries changed; no existing trace bytes touched).
+
+### Ported (1-2/1-3 content)
+* `$E8` Goomba pipe: `$70`-frame spawn timer, the 3-in-4 counter, the "Sonic to the right" test and the emerging
+  Goomba (`Emerge = $28`, facing right); invisible, despawns with `MarkObjGone`.
+* `$E9` micro goomba: swaying fall (1/16 px x acceleration, ±1 px, 1 px fall cap), the cling (Grip grows every 16
+  frames to 5, a button press loosens it), Sonic's ground speed clamped to 3 px while stuck, bobbing, flop-off, and
+  the 100-point roll/spindash knock-out.
+* `$EA` Boomerang Brother (walk/stop phase timer, the `$1F` throw counter, pose frames, 256-frame hop) and `$EB` the
+  returning boomerang (age, direction deceleration, gravity, owner/respawn restoration, catch, despawn).
+* `$0D` goal roulette (SMB3 zones): card cycling every 8 frames, touch test, `UpdateHudTimer = 0`, the time/ring
+  score bonus, control lock + right run-off, fly-away/message timers, `$E7` text objects and the `GoalCard` result.
+  The art/font/VRAM half is M5; only RAM/behaviour is ported.
+* `smb3_levels_motion.rs`: both levels × four scripts compared with `CompareMask::MOTION`; all eight match 600 ticks.
+
+### Two semantic findings
+1. **1-2/1-3 never reach the goal within 600 ticks.** 1-2's furthest Sonic is x=341 (camera 181; it stops against a
+   pipe wall), and 1-3's is x=493 (camera 333, spindash; the `right` traces die to the early Koopa and restart). The
+   goal records are at x=2696 (1-2) and x=2440 (1-3) and are not even spawned (`camera + $280` stays below them), so
+   there is no "first goal tick" in this set; the roulette/exit path is ported but remains unexercised until the
+   goal-specific traces/1-1 goal run are brought in (M4c).
+2. **1-3 spindash reaches the legacy's own unported path at tick 115**: `Solid.Vertical` throws
+   `UnportedException(0x1D8E0, "crushed by a solid object (KillCharacter)")`. `LevelSession.StepPlaying` catches it,
+   sets `Stopped`, and every later frame is a no-op, so the oracle trace freezes at tick 115 (Sonic's post-step state,
+   camera/timer unchanged). The port now returns the same `Unported` from `Solid` and `Session` stores it in
+   `Session::stopped`, reproducing the freeze exactly instead of inventing a crush death. (The same applies to any
+   future unported path inside a frame.)
+
+### Verification
+* `cargo test -p engine-core --test smb3_levels_motion -- --nocapture`: 8/8 traces match all 600 ticks.
+* `cargo test -p engine-core --test player_motion`: 1-1's four traces still match all 600 ticks.
+* `cargo test --workspace`: 65 engine-core unit tests (5 new: goomba pipe, micro goomba, boomerang throw/catch, goal
+  touch/bonus, crush-stop), 1 (1-1 motion), 1 (1-2/1-3 motion), 2 golden-trace, 5 rom-assets.
+* `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+Next (M4c): SMB3 1-2/1-3 goal traces and the goal/exit session flow, then the remaining SMB3 ids (pipes are
+session-level, roulette text art is M5) and the Sonic-zone object set.
+
+
+
+## 2026-10-20 — Decision: full legacy parity retained
+
+The user confirmed all Sonic-zone content stays in the port's equivalence scope (Emerald Hill, Green Hill, Marble Zone),
+even though the stock build does not ship Green Hill/Marble. The golden traces for those zones are part of the engine
+equivalence gate, not just a reference. The stock importer remains workstream 2 and may simply not generate those
+levels.
+
+## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:
 

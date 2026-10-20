@@ -83,6 +83,14 @@ const SPECIAL = [
   { name: 'smb3-1-1-playing-right', zone: '40', act: 1, script: 'right0', frames: 600, noTitleCard: true },
   { name: 'smb3-1-1-playing-jump', zone: '40', act: 1, script: 'jump0', frames: 600, noTitleCard: true },
   { name: 'smb3-1-1-playing-spindash', zone: '40', act: 1, script: 'spindash0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-2-playing-idle', zone: '41', act: 1, script: 'idle', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-2-playing-right', zone: '41', act: 1, script: 'right0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-2-playing-jump', zone: '41', act: 1, script: 'jump0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-2-playing-spindash', zone: '41', act: 1, script: 'spindash0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-3-playing-idle', zone: '42', act: 1, script: 'idle', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-3-playing-right', zone: '42', act: 1, script: 'right0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-3-playing-jump', zone: '42', act: 1, script: 'jump0', frames: 600, noTitleCard: true },
+  { name: 'smb3-1-3-playing-spindash', zone: '42', act: 1, script: 'spindash0', frames: 600, noTitleCard: true },
 ];
 
 const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;

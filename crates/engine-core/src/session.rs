@@ -30,6 +30,8 @@ pub struct Session {
     pub camera_y: i32,
     /// Frames stepped (the trace's `tick` before the current call).
     pub ticks: u32,
+    /// The legacy `LevelSession.Stopped`: an unported path aborted the frame; later frames do nothing.
+    pub stopped: Option<Unported>,
 }
 
 impl Session {
@@ -56,6 +58,7 @@ impl Session {
             camera_x,
             camera_y,
             ticks: 0,
+            stopped: None,
         })
     }
 
@@ -66,6 +69,21 @@ impl Session {
 
     /// One frame. `buttons` is the held Mega Drive pad byte (Up 0, Down 1, Left 2, Right 3, B 4, C 5, A 6, Start 7).
     pub fn step(&mut self, buttons: u8) -> Result<(), Unported> {
+        // LevelSession.StepPlaying: once an unported exception has stopped the session, every later frame is a
+        // no-op and the trace keeps recording the frozen state.
+        if self.stopped.is_some() {
+            self.ticks += 1;
+            return Ok(());
+        }
+        let result = self.step_frame(buttons);
+        if let Err(e) = result {
+            self.stopped = Some(e);
+        }
+        self.ticks += 1;
+        Ok(())
+    }
+
+    fn step_frame(&mut self, buttons: u8) -> Result<(), Unported> {
         let previous = self.world.ram.u8(vars::CTRL1_HELD);
         self.world.ram.w8(vars::CTRL1_HELD, buttons);
         self.world.ram.w8(vars::CTRL1_PRESS, buttons & !previous);
@@ -96,12 +114,11 @@ impl Session {
         }
         self.world
             .objects
-            .run_after_players(&mut self.world.ram, &self.sets, dying);
+            .run_after_players(&mut self.world.ram, &self.sets, dying)?;
 
         if self.world.ram.u16(vars::LEVEL_INACTIVE_FLAG) != 0 {
             // 0x51C4: the Act is rebuilt straight away when title cards are off.
             self.restart()?;
-            self.ticks += 1;
             return Ok(());
         }
 
@@ -122,7 +139,6 @@ impl Session {
 
         self.camera_x = self.world.camera_x();
         self.camera_y = self.world.camera_y();
-        self.ticks += 1;
         Ok(())
     }
 

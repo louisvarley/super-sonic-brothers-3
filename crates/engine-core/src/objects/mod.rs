@@ -29,6 +29,9 @@ pub mod ids {
     pub const FIREBALL: u8 = 0xE6;
     pub const GOOMBA_PIPE: u8 = 0xE8;
     pub const MICRO_GOOMBA: u8 = 0xE9;
+    pub const BOOMERANG_BRO: u8 = 0xEA;
+    pub const BOOMERANG: u8 = 0xEB;
+    pub const GOAL_TEXT: u8 = 0xE7;
 }
 
 /// Object ids shared with Sonic 2 (`Ids.cs`, `Monitor.cs`, `Animal.cs`).
@@ -47,6 +50,8 @@ pub struct Objects {
     pub slot_counter: i32,
     /// Ids that ran without a port (kept for diagnostics; the legacy records these too).
     pub unported_seen: Vec<u8>,
+    /// Set when the SMB3 goal roulette's message sequence ends (the legacy World.GoalCard).
+    pub goal_card: Option<i32>,
 }
 
 impl Default for Objects {
@@ -60,6 +65,7 @@ impl Objects {
         Self {
             slot_counter: 0,
             unported_seen: Vec::new(),
+            goal_card: None,
         }
     }
 
@@ -77,7 +83,12 @@ impl Objects {
     ///
     /// `player_dying` is Sonic's routine >= 6 at the start of `RunObjects` (0x1997E): then the dynamic slots are
     /// skipped (a redraw only) and the level freezes until the restart.
-    pub fn run_after_players(&mut self, ram: &mut Ram, sets: &CollisionSets, player_dying: bool) {
+    pub fn run_after_players(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        player_dying: bool,
+    ) -> Result<(), crate::player::Unported> {
         let mut a = vars::TITLE_CARD_ZONE_NAME;
         while a < vars::OBJECT_RAM_END {
             let id = ram.u8(a);
@@ -99,50 +110,62 @@ impl Objects {
                 } else {
                     self.slot_counter = 0x8F - Self::slot_index(a);
                 }
-                if !self.run_object(ram, sets, o, id) {
+                if !self.run_object(ram, sets, o, id)? {
                     mark_obj_gone(ram, o);
                 }
             }
             a = a.wrapping_add(solid::SLOT_SIZE);
         }
+        Ok(())
     }
 
     /// Runs the occupied slots in `[start, end)` (the title-card loop).
-    pub fn run_range(&mut self, ram: &mut Ram, sets: &CollisionSets, start: u16, end: u16) {
+    pub fn run_range(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        start: u16,
+        end: u16,
+    ) -> Result<(), crate::player::Unported> {
         let mut a = start;
         while a < end {
             let id = ram.u8(a);
             if id != 0 {
                 self.slot_counter = 0x8F - Self::slot_index(a);
                 let o = Obj::new(a);
-                if !self.run_object(ram, sets, o, id) {
+                if !self.run_object(ram, sets, o, id)? {
                     mark_obj_gone(ram, o);
                 }
             }
             a = a.wrapping_add(solid::SLOT_SIZE);
         }
+        Ok(())
     }
 
     /// Dispatch one object. Returns false when the id has no port in this zone (the caller marks it gone).
-    fn run_object(&mut self, ram: &mut Ram, sets: &CollisionSets, o: Obj, id: u8) -> bool {
+    fn run_object(
+        &mut self,
+        ram: &mut Ram,
+        sets: &CollisionSets,
+        o: Obj,
+        id: u8,
+    ) -> Result<bool, crate::player::Unported> {
         match id {
-            ids::BLOCK => smb3::block(ram, sets, o),
+            ids::BLOCK => smb3::block(ram, sets, o)?,
             ids::GOOMBA | ids::PARAGOOMBA => smb3::goomba(ram, sets, o),
             ids::KOOPA | ids::PARATROOPA => smb3::koopa(ram, sets, o),
             ids::PIRANHA => smb3::piranha(ram, sets, o),
             ids::FIREBALL => smb3::fireball(ram, o),
+            ids::GOOMBA_PIPE => smb3::goomba_pipe(ram, o),
+            ids::MICRO_GOOMBA => smb3::micro_goomba(ram, o),
+            ids::BOOMERANG_BRO => smb3::boomerang_bro(ram, sets, o),
+            ids::BOOMERANG => smb3::boomerang(ram, o),
+            ids::GOAL_TEXT => {}
             common_ids::LOST_RINGS => common::lost_rings(ram, sets, o, self.slot_counter),
             common_ids::EXPLOSION => common::explosion(ram, o),
             common_ids::ANIMAL => common::animal(ram, o),
             common_ids::POINTS => common::points(ram, o),
-            common_ids::GOAL => {
-                // The SMB3 goal roulette (zone $40/$41/$42 signpost slot) is M4b; 1-1's record is at x=$A88 and
-                // never spawns within these traces.
-                if !self.unported_seen.contains(&id) {
-                    self.unported_seen.push(id);
-                }
-                return false;
-            }
+            common_ids::GOAL => smb3::roulette_goal(ram, o, &mut self.goal_card),
             // Tails' tails (object $05) and the players' dust are display-only in the legacy code; they never
             // write to a player or an interactive object.
             common_ids::TAILS_TAILS | common_ids::DUST => {}
@@ -150,10 +173,10 @@ impl Objects {
                 if !self.unported_seen.contains(&id) {
                     self.unported_seen.push(id);
                 }
-                return false;
+                return Ok(false);
             }
         }
-        true
+        Ok(true)
     }
 }
 
@@ -335,14 +358,18 @@ mod tests {
         o.set_routine(&mut ram, 2);
 
         let mut objects = Objects::new();
-        objects.run_after_players(&mut ram, &sets, true);
+        objects
+            .run_after_players(&mut ram, &sets, true)
+            .expect("run");
         assert_eq!(
             o.y_vel(&ram),
             0,
             "dynamic objects do not run while Sonic dies"
         );
 
-        objects.run_after_players(&mut ram, &sets, false);
+        objects
+            .run_after_players(&mut ram, &sets, false)
+            .expect("run");
         assert_eq!(o.y_vel(&ram), 0x38, "gravity after the first live frame");
     }
 }
