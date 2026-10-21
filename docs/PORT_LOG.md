@@ -711,13 +711,17 @@ sprite clipping. These are the next batch.
 * **Card game room fixed (K5 closed)**: the `Video_Upd_Table` entries are little-endian assembler tables, but the
   port read them big-endian. That corrupted the bonus room's nametable/instruction box. `video_update` now uses
   `prg_word_le`; `frontend-match` matches all 400 ticks and is a normal strict test (no longer ignored).
+* The card cursor/flip tiles are now resolved by the same `NesPresenter` that renders the card board. Previously a
+  second presenter reused MD tiles 1.. and overwrote the cursor/flip art, which caused the striped/glitched selection
+  sprites. Tails now hosts from the right side of the table, facing left (native build only; the legacy golden keeps
+  Toad's old position).
 * **Title intro audio**: the title now has its own 68k SFX driver and queues the C# `Sb3TitleScreen` sounds — logo-drop
   Smash, menu cursor Blip/Ring, spindash rev/release, roll, jump, Goomba explosion, shell Smash and Tails' helicopter.
   It uses a separate title RAM/driver so it cannot disturb level/map audio.
 * **Map-load sound**: every map load queues `map-world` (SMB3's overworld arrival sound) on the map audio player.
-* **Entry sync**: the map action now hands over immediately. The level starts with `enter-level` on its own audio and a
-  32-frame black border closes over the **level** (not the map), so the transition animation and loading sound start
-  together. There is no second CampaignRunner pre-roll.
+* **Entry sync**: the map action now hands over immediately. The map stays on screen while a 54-frame border closes to
+  black and `enter-level` plays; only after the screen is dark does the level load (with no duplicate entry sound).
+  That keeps the animation and the loading sound together and shows no level behind the transition.
 * **Goal card roulette**: the goal object gets the legacy `RouletteGoal` three-frame mapping table built from Sonic
   monitor frames (ring/shield/invincibility) plus card-icon frames for the "you got a card" text object. The card
   visibly changes every 8 frames, stops on the touched card, and the final card icon is shown before the map slot

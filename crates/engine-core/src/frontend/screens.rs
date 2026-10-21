@@ -336,8 +336,9 @@ impl GameFlow {
                     action = None;
                 } else if matches!(action, Some(MapAction::StartMatch)) {
                     self.progress.position = SPADE_TILE;
-                    self.screen =
-                        ScreenState::Match(MatchScreen::new(&self.assets, self.progress.clone()));
+                    let mut match_screen = MatchScreen::new(&self.assets, self.progress.clone());
+                    match_screen.set_host_right(self.single_player);
+                    self.screen = ScreenState::Match(match_screen);
                     action = None;
                 }
             }
@@ -365,6 +366,9 @@ impl GameFlow {
         if enabled {
             if let ScreenState::Title(s) = &mut self.screen {
                 s.set_single_player();
+            }
+            if let ScreenState::Match(s) = &mut self.screen {
+                s.set_host_right(true);
             }
         }
     }
@@ -477,6 +481,7 @@ pub struct MatchScreen {
     fade_left: i32,
     fade_mode: i32,
     room: bool,
+    host_right: bool,
     table: std::collections::HashSet<(usize, usize)>,
     // N-Spade card game.
     state: i32,
@@ -495,7 +500,6 @@ pub struct MatchScreen {
     deck: Vec<i32>,
     cursor: bool,
     face_up: [bool; 18],
-    extra_sprites: Vec<(i32, i32, u8, u16)>,
     finished: bool,
     pub sound_effects: Vec<&'static str>,
 }
@@ -518,6 +522,7 @@ impl MatchScreen {
             fade_left: 0,
             fade_mode: 1,
             room: true,
+            host_right: false,
             table: std::collections::HashSet::new(),
             state: 0,
             index: 0,
@@ -535,13 +540,16 @@ impl MatchScreen {
             deck: Vec::new(),
             cursor: true,
             face_up: [false; 18],
-            extra_sprites: Vec::new(),
             finished: false,
             sound_effects: Vec::new(),
         };
         s.init_room();
         s
     }
+    pub fn set_host_right(&mut self, right: bool) {
+        self.host_right = right;
+    }
+
     fn init_room(&mut self) {
         self.ctx.clear_screen();
         self.ctx.load_palette_03();
@@ -679,7 +687,21 @@ impl MatchScreen {
         let mut sk = SpriteKit::new(&mut p.ram, &mut p.vram);
         sk.begin();
         sk.load_dplc(&p.assets.tails, 1, 0x540);
-        sk.frame(&p.assets.tails, 1, 136 + 32, 114 - 8, 0x540, false, false);
+        let (host_x, host_flip) = if self.host_right {
+            // Native build: Tails hosts from the right side of the table, facing back across it.
+            (184, true)
+        } else {
+            (136, false)
+        };
+        sk.frame(
+            &p.assets.tails,
+            1,
+            host_x + 32,
+            114 - 8,
+            0x540,
+            host_flip,
+            false,
+        );
         sk.load_dplc(&p.assets.sonic, 1, 0x500);
         sk.frame(&p.assets.sonic, 1, 40 + 32, 124 - 8, 0x500, false, false);
         sk.end();
@@ -725,14 +747,12 @@ impl MatchScreen {
         self.turns_remain = 1;
         self.cursor = true;
         self.state = 0;
-        self.extra_sprites.clear();
         self.ctx.begin_fade_in();
         self.fade_mode = 1;
         self.fade_left = 16;
     }
 
     fn step_cards(&mut self, buttons: u8) {
-        self.extra_sprites.clear();
         match self.state {
             0 => {
                 self.do_selection(buttons);
@@ -814,10 +834,8 @@ impl MatchScreen {
     fn do_flip(&mut self) {
         if self.anim_tick != 0 {
             self.anim_tick -= 1;
-            self.draw_flip(self.flip_card);
             return;
         }
-        self.draw_flip(self.flip_card);
         self.flip_frame -= 1;
         if self.flip_frame < 0 {
             self.render_face(self.index);
@@ -901,10 +919,8 @@ impl MatchScreen {
     fn flip_back_card(&mut self) {
         if self.anim_tick != 0 {
             self.anim_tick -= 1;
-            self.draw_flip(self.flip_card);
             return;
         }
-        self.draw_flip(self.flip_card);
         self.flip_frame += 1;
         if self.flip_frame >= 5 {
             self.render_back(self.flip_card);
@@ -1053,55 +1069,31 @@ impl MatchScreen {
         nes.sprite_tile(tile, pal) as u16
     }
 
-    fn draw_flip(&mut self, card: i32) {
-        if card < 0 {
-            return;
-        }
-        let x0 = self.prg22(CARD_CURSOR_XS + card as usize) as i32 + 8;
-        let y0 = self.prg22(CARD_CURSOR_YS + card as usize) as i32 + 8;
-        let frame = self.flip_frame.clamp(0, 4);
-        let pal = (self.prg22(CARD_FLIP_ATTRIBUTES + frame as usize) & 3) as usize;
-        let def = self.prg22(CARD_FLIP_FRAME_DEF_OFF + frame as usize) as usize;
-        for i in 0..4 {
-            let pattern = self.prg22(CARD_FLIP_FRAME_DEFS + def + i);
-            let hflip = (i & 1) != 0;
-            let t = self.sprite_tile(pattern, pal);
-            self.extra_sprites.push((
-                x0 + (i as i32 & 1) * 8,
-                y0 + (i as i32 >> 1) * 16,
-                1,
-                0xE000 | t | if hflip { 0x800 } else { 0 },
-            ));
-        }
-    }
-
-    fn draw_cursor(&mut self) {
-        // The SMB3 bracket cursor is made of four graphics-buffer templates whose patterns are not part of the
-        // Sonic monitor art, and it reads as a jumble in this palette. Use a Sonic ring marker above the card.
-        let x = self.prg22(CARD_CURSOR_XS + self.index as usize) as i32;
-        let y = self.prg22(CARD_CURSOR_YS + self.index as usize) as i32;
-        let Some(piece) = self
-            .ctx
-            .assets
-            .monitor
-            .frames
-            .get(5)
-            .and_then(|f| f.first())
-        else {
-            return;
-        };
-        let pattern =
-            ((piece.pattern as usize & 0x7FF) + 0x580) | (piece.pattern as usize & 0x6000);
-        self.extra_sprites
-            .push((x + 4, y - 14, piece.size, 0x8000 | pattern as u16));
-    }
-
     fn present_cards(&mut self) {
-        let extra = self.extra_sprites.clone();
         let face_up = self.face_up;
         let deck = self.deck.clone();
         let cards = self.progress.cards.clone();
         let monitor = self.ctx.assets.monitor.clone();
+        let state = self.state;
+        let cursor = self.cursor;
+        let index = self.index;
+        let flip_card = self.flip_card;
+        let flip_frame = self.flip_frame;
+        let cursor_xs: Vec<u8> = (0..18).map(|i| self.prg22(CARD_CURSOR_XS + i)).collect();
+        let cursor_ys: Vec<u8> = (0..18).map(|i| self.prg22(CARD_CURSOR_YS + i)).collect();
+        let select_pattern: Vec<u8> = (0..10)
+            .map(|i| self.prg22(CARD_SELECT_PATTERN + i))
+            .collect();
+        let select_attr: Vec<u8> = (0..10)
+            .map(|i| self.prg22(CARD_SELECT_ATTRIBUTE + i))
+            .collect();
+        let flip_pal =
+            (self.prg22(CARD_FLIP_ATTRIBUTES + flip_frame.clamp(0, 4) as usize) & 3) as usize;
+        let flip_def =
+            self.prg22(CARD_FLIP_FRAME_DEF_OFF + flip_frame.clamp(0, 4) as usize) as usize;
+        let flip_pattern: Vec<u8> = (0..4)
+            .map(|i| self.prg22(CARD_FLIP_FRAME_DEFS + flip_def + i))
+            .collect();
         let mut icons: Vec<(i32, i32, u8, u16)> = Vec::new();
         for (i, up) in face_up.iter().enumerate() {
             if !up {
@@ -1166,9 +1158,63 @@ impl MatchScreen {
                 vars::NORMAL_PALETTE
             },
         );
+
+        // Resolve cursor/flip tiles with the same presenter that just wrote the background; a second presenter
+        // would reuse MD tiles 1.. and overwrite them.
+        let mut extras: Vec<(i32, i32, u8, u16)> = Vec::new();
+        if state == 0 && cursor && index < 18 {
+            let x0 = cursor_xs[index as usize] as i32;
+            let mut y = cursor_ys[index as usize] as i32;
+            let mut x = x0;
+            let mut n = 0usize;
+            let mut push = |x: i32, y: i32, n: usize| {
+                let t = nes.sprite_tile(select_pattern[n], (select_attr[n] & 3) as usize);
+                let mut pattern = 0xE000 | t as u16;
+                if (select_attr[n] & 0x40) != 0 {
+                    pattern |= 0x800;
+                }
+                if (select_attr[n] & 0x80) != 0 {
+                    pattern |= 0x1000;
+                }
+                extras.push((x, y, 1, pattern));
+            };
+            for _ in 0..4 {
+                push(x, y, n);
+                n += 1;
+                x += 8;
+            }
+            y += 16;
+            push(x0, y, n);
+            n += 1;
+            push(x0 + 24, y, n);
+            n += 1;
+            y += 16;
+            x = x0;
+            for _ in 0..4 {
+                push(x, y, n);
+                n += 1;
+                x += 8;
+            }
+        }
+        if flip_card >= 0 && (flip_card as usize) < 18 {
+            let x0 = cursor_xs[flip_card as usize] as i32 + 8;
+            let y0 = cursor_ys[flip_card as usize] as i32 + 8;
+            for i in 0..4 {
+                let t = nes.sprite_tile(flip_pattern[i], flip_pal);
+                let hflip = (i & 1) != 0;
+                extras.push((
+                    x0 + (i as i32 & 1) * 8,
+                    y0 + (i as i32 >> 1) * 16,
+                    1,
+                    0xE000 | t as u16 | if hflip { 0x800 } else { 0 },
+                ));
+            }
+        }
+        drop(nes);
+
         let mut sk = SpriteKit::new(&mut p.ram, &mut p.vram);
         sk.begin();
-        for (x, y, size, pattern) in extra {
+        for (x, y, size, pattern) in extras {
             sk.piece(x + 32, y + 1 - 8, size, pattern);
         }
         for (x, y, size, pattern) in icons {
@@ -1271,9 +1317,6 @@ impl MatchScreen {
         }
         self.give_rings();
         self.step_cards(buttons);
-        if self.state == 0 && self.cursor {
-            self.draw_cursor();
-        }
         self.present_cards();
     }
 

@@ -95,6 +95,9 @@ fn install_goal_sprites(graphics: &mut Graphics) {
         };
         frame.truncate(1);
         if let Some(piece) = frame.first_mut() {
+            // RouletteGoal.Icon uses a fixed (-8,-8) offset, unlike the monitor object's own mapping.
+            piece.x = -8;
+            piece.y = -8;
             piece.pattern = piece.pattern.wrapping_add(0x8680);
         }
         frames.push(frame);
@@ -103,8 +106,18 @@ fn install_goal_sprites(graphics: &mut Graphics) {
         // Frames 3-6 are the "COURSE CLEAR"/"YOU GOT A CARD" text objects in the legacy class. This port has no
         // SMB3 font tiles in level VRAM, so they show the same monitor card icon instead of going blank.
         let icons = frames.clone();
-        frames.push(icons[0].clone());
-        frames.extend(icons);
+        let text_frame = |icon: &[crate::graphics::MappingPiece]| {
+            let mut frame = icon.to_vec();
+            if let Some(piece) = frame.first_mut() {
+                piece.x = 128;
+                piece.y = -8;
+            }
+            frame
+        };
+        frames.push(text_frame(&icons[0]));
+        for icon in &icons {
+            frames.push(text_frame(icon));
+        }
         graphics.bank.add(SpriteData {
             frames,
             rom_pointer: GOAL_MAPPINGS,

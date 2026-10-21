@@ -1140,18 +1140,11 @@ impl TitleScreen {
         let a = move |line: usize| Self::plane_a(line, vs);
         let mut rgba = self.ctx.render_rgba(v, &a, &Self::plane_b);
         if self.menu && self.single_player {
-            // The title art still contains SMB3's "2 PLAYER GAME" line; cover it with the nearby backdrop.
-            let source = (170 * 320 + 100) * 4;
-            let background = [
-                rgba[source],
-                rgba[source + 1],
-                rgba[source + 2],
-                rgba[source + 3],
-            ];
-            for y in 161..178 {
+            // The title art still contains SMB3's "2 PLAYER GAME" line; cover it with the flat title backdrop.
+            for y in 161..179 {
                 for x in 88..232 {
                     let i = (y * 320 + x) * 4;
-                    rgba[i..i + 4].copy_from_slice(&background);
+                    rgba[i..i + 4].copy_from_slice(&[219, 182, 146, 255]);
                 }
             }
         }

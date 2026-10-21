@@ -16,6 +16,18 @@ use rom_assets::{
 
 const CAMPAIGN_ZONE: u8 = 0x43;
 
+const ENTRY_FRAMES: u8 = 54;
+
+enum PendingLevel {
+    Area(u16),
+    Zone(u8, u8),
+}
+
+struct EntryTransition {
+    frames: u8,
+    pending: PendingLevel,
+}
+
 pub struct CampaignRunner {
     archive: Archive,
     pub campaign: CampaignData,
@@ -28,7 +40,9 @@ pub struct CampaignRunner {
     map_ram: Ram,
     title_audio: Option<Box<AudioState>>,
     title_ram: Ram,
-    entry_overlay: u8,
+    entry: Option<EntryTransition>,
+    return_transition: u8,
+    map_world_played: bool,
     map_music: u16,
     current_act: Option<u16>,
     pub ticks: u32,
@@ -88,7 +102,9 @@ impl CampaignRunner {
             map_ram: Ram::new(),
             title_audio: None,
             title_ram: Ram::new(),
-            entry_overlay: 0,
+            entry: None,
+            return_transition: 0,
+            map_world_played: false,
             map_music: 0x94,
             current_act: None,
             ticks: 0,
@@ -144,7 +160,11 @@ impl CampaignRunner {
         self.map_music = assets.extra_music.unwrap_or(0x94);
         let mut audio = Box::new(AudioState::new(assets));
         audio.start_music(&mut self.map_ram, self.map_music);
-        audio.play_effect("map-world");
+        if !self.map_world_played {
+            // SMB3's map-arrival jingle is a first-boot cue, not a sound for every return from a level.
+            audio.play_effect("map-world");
+            self.map_world_played = true;
+        }
         self.map_audio = Some(audio);
     }
 
@@ -170,6 +190,10 @@ impl CampaignRunner {
     }
 
     fn start_area(&mut self, act: u16) -> Result<(), String> {
+        self.start_area_with_entry(act, true)
+    }
+
+    fn start_area_with_entry(&mut self, act: u16, entry_sound: bool) -> Result<(), String> {
         let area = self
             .campaign
             .area_for_act(act)
@@ -191,7 +215,9 @@ impl CampaignRunner {
         self.seed_progress(&mut session);
         if let Ok(audio) = load_audio_assets_for_area(&self.archive, &area.directory) {
             session.enable_audio(audio);
-            session.play_effect("enter-level");
+            if entry_sound {
+                session.play_effect("enter-level");
+            }
         }
         self.map_audio = None;
         self.session = Some(session);
@@ -200,7 +226,12 @@ impl CampaignRunner {
         Ok(())
     }
 
-    fn start_zone(&mut self, zone: u8, act: u8) -> Result<(), String> {
+    fn start_zone_with_entry(
+        &mut self,
+        zone: u8,
+        act: u8,
+        entry_sound: bool,
+    ) -> Result<(), String> {
         let level = LevelData::load(&self.archive, zone as u16, act as u16)?;
         let mut session = Session::new(
             Box::new(level),
@@ -216,7 +247,9 @@ impl CampaignRunner {
         self.seed_progress(&mut session);
         if let Ok(audio) = load_audio_assets_for_zone(&self.archive, zone, None) {
             session.enable_audio(audio);
-            session.play_effect("enter-level");
+            if entry_sound {
+                session.play_effect("enter-level");
+            }
         }
         self.map_audio = None;
         self.session = Some(session);
@@ -408,8 +441,23 @@ impl CampaignRunner {
     /// One game frame. Map actions load a level; an exited level returns to the map.
     pub fn step(&mut self, buttons: u8) {
         self.ticks += 1;
-        if self.entry_overlay > 0 {
-            self.entry_overlay -= 1;
+        if let Some(mut entry) = self.entry.take() {
+            if let Some(audio) = self.map_audio.as_mut() {
+                audio.update(&mut self.map_ram);
+            }
+            entry.frames += 1;
+            if entry.frames >= ENTRY_FRAMES {
+                let result = match entry.pending {
+                    PendingLevel::Area(act) => self.start_area_with_entry(act, false),
+                    PendingLevel::Zone(zone, act) => self.start_zone_with_entry(zone, act, false),
+                };
+                if let Err(e) = result {
+                    self.last_error = Some(e);
+                }
+            } else {
+                self.entry = Some(entry);
+            }
+            return;
         }
         if let Some(session) = self.session.as_mut() {
             session.step(buttons).ok();
@@ -420,6 +468,13 @@ impl CampaignRunner {
             if session.exited() {
                 self.finish_level();
             }
+            return;
+        }
+        if self.return_transition > 0 {
+            if let Some(audio) = self.map_audio.as_mut() {
+                audio.update(&mut self.map_ram);
+            }
+            self.return_transition -= 1;
             return;
         }
         if let Some(audio) = self.map_audio.as_mut() {
@@ -471,26 +526,22 @@ impl CampaignRunner {
                 audio.play_effect(effect);
             }
         }
-        let result = match action {
+        match action {
             Some(MapAction::StartArea { act }) => {
-                let result = self.start_area(act);
-                if result.is_ok() {
-                    self.entry_overlay = 32;
-                }
-                result
+                self.begin_entry(PendingLevel::Area(act));
             }
             Some(MapAction::StartZone { zone, act }) => {
-                let result = self.start_zone(zone, act);
-                if result.is_ok() {
-                    self.entry_overlay = 32;
-                }
-                result
+                self.begin_entry(PendingLevel::Zone(zone, act));
             }
-            Some(MapAction::StartMatch) | Some(MapAction::BackToMap { .. }) | None => Ok(()),
-        };
-        if let Err(e) = result {
-            self.last_error = Some(e);
+            Some(MapAction::StartMatch) | Some(MapAction::BackToMap { .. }) | None => {}
         }
+    }
+
+    fn begin_entry(&mut self, pending: PendingLevel) {
+        if let Some(audio) = self.map_audio.as_mut() {
+            audio.play_effect("enter-level");
+        }
+        self.entry = Some(EntryTransition { frames: 0, pending });
     }
 
     fn finish_level(&mut self) {
@@ -531,17 +582,22 @@ impl CampaignRunner {
         }
         self.flow.set_progress_map(p, false);
         self.start_map_audio(self.flow.progress.world as u8);
+        self.return_transition = 24;
     }
 
     pub fn render(&mut self) -> Vec<u8> {
+        if let Some(entry) = &self.entry {
+            let mut frame = self.flow.render_rgba();
+            draw_entry_border(&mut frame, entry.frames);
+            return frame;
+        }
+        if self.return_transition > 0 {
+            let mut frame = self.flow.render_rgba();
+            draw_entry_border(&mut frame, self.return_transition);
+            return frame;
+        }
         match self.session.as_mut() {
-            Some(s) => {
-                let mut frame = s.render();
-                if self.entry_overlay > 0 {
-                    draw_entry_border(&mut frame, 32 - self.entry_overlay);
-                }
-                frame
-            }
+            Some(s) => s.render(),
             None => self.flow.render_rgba(),
         }
     }
