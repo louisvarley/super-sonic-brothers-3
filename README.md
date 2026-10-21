@@ -40,10 +40,9 @@ cargo build --release -p sonic-bros-3
 
 The release binary is a single static-CRT `.exe` (no MSVC redistributable). It needs the campaign archive
 `campaign.bin` (or the older `sonicbros3.bin`) in the current directory, or `--data PATH`. With campaign data it boots
-at the SMB3 title/curtain, then the World 1 map. Controls: P1 arrows + **Z/X/C/Space/Enter**; P2 (Tails) **W/A/S/D**
-+ **J/K/L**, `I` = Start; **P** = pause, **Esc** = quit. `--two-player` starts 2P on Sonic's turn and `--tails-turn`
-starts on Tails' turn; turns alternate after each level or death. `--match`, `--cards`, `--map` and `--campaign-act N`
-are available for testing.
+at the SMB3 title/curtain, then the World 1 map. Controls: arrows + **Z/X/C/Space/Enter**; **P** = pause,
+**Esc** = quit. 2-player mode is removed. `--match`, `--cards`, `--map` and `--campaign-act N` are available for
+testing.
 
 ```powershell
 # other reviewed levels
@@ -59,10 +58,10 @@ are available for testing.
 
 Audio: the 68k SMPS path (SMB3 levels/map music + Sonic SFX) and Mario PCM effects are working. Regenerate the Mario
 effects with `dotnet run --project tools/Smb3Effects -- --rom smb3.nes --out web-data/effects`; the Z80 path used by
-Sonic-zone/title music is not ported yet. The N-Spade card game, Sonic item prizes, turn-based 2P and pipe travel are
-ported; its bonus-room framebuffer trace still differs from the legacy oracle (K5). There is no Rust web/WASM shell
-yet, and the native game reads the legacy derived archive for now; the stock Sonic 2 + SMB3 importer (including the
-missing castle areas) is the remaining asset workstream.
+Sonic-zone/title music is not ported yet, but the title's 68k SFX are. The N-Spade card game, Sonic item prizes and
+pipe travel are ported; the bonus-room/card-game framebuffer traces are strict gates now. 2-player mode is removed
+from the menu and build. There is no Rust web/WASM shell yet, and the native game reads the legacy derived archive
+for now; the stock Sonic 2 + SMB3 importer (including the missing castle areas) is the remaining asset workstream.
 
 ## ROMs
 

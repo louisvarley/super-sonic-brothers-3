@@ -1,6 +1,6 @@
 //! The N-Spade card game: the bonus room gives way to an 18-card deck and the shuffler keeps it between visits.
 //!
-//! The legacy oracle is `MatchGameScreen.cs`; the framebuffer gate is still the ignored `frontend-match` trace.
+//! The legacy oracle is `MatchGameScreen.cs`; `frontend-match` is now a strict framebuffer gate too.
 
 use engine_core::frontend::screens::MatchScreen;
 use engine_core::frontend::MapProgress;

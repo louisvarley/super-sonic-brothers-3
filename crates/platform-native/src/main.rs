@@ -33,8 +33,6 @@ struct Options {
     map_screen: usize,
     campaign_act: Option<u16>,
     match_game: bool,
-    two_player: bool,
-    tails_turn: bool,
     preview_cards: bool,
     inputs: Option<PathBuf>,
     list_campaign: bool,
@@ -91,13 +89,13 @@ fn usage() -> ! {
         "Sonic Bros. 3 (Rust port)\n\
          \n\
          Usage: sonic-bros-3 [--data web-data/campaign.bin] [--map] [--world 1-8] [--map-screen N]\n\
-         \x20      [--campaign-act N] [--match] [--two-player|--tails-turn] [--cards] [--level 1-1|1-2|1-3]\n\
+         \x20      [--campaign-act N] [--match] [--cards] [--level 1-1|1-2|1-3]\n\
          \x20      [--frames N --screenshot out.png] [--inputs script.txt] [--mute] [--list-campaign]\n\
          \n\
          With campaign.bin and no --level/--zone, starts at the SMB3 title/curtain; press Enter at the menu to\n\
          enter the World 1 map. --map skips the title. --campaign-act enters one area directly.\n\
          Default level when using sonicbros3.bin: 1-1 (zone 0x40, act 1).\n\
-         Controls: P1 arrows + Z/X/C/Space/Enter; P2 (Tails) W/A/S/D + J/K/L, I = Start; P = pause, Esc = quit.\n\
+         Controls: arrows + Z/X/C/Space/Enter; P = pause, Esc = quit.\n\
          Audio: 48 kHz stereo (68k SMPS); --mute disables output."
     );
     std::process::exit(2);
@@ -113,8 +111,6 @@ fn parse_args() -> Options {
     let mut map_screen = 0usize;
     let mut campaign_act = None;
     let mut match_game = false;
-    let mut two_player = false;
-    let mut tails_turn = false;
     let mut preview_cards = false;
     let mut inputs = None;
     let mut list_campaign = false;
@@ -184,11 +180,6 @@ fn parse_args() -> Options {
                 );
             }
             "--match" => match_game = true,
-            "--two-player" => two_player = true,
-            "--tails-turn" => {
-                two_player = true;
-                tails_turn = true;
-            }
             "--cards" => preview_cards = true,
             "--inputs" => {
                 i += 1;
@@ -239,8 +230,6 @@ fn parse_args() -> Options {
         map_screen,
         campaign_act,
         match_game,
-        two_player,
-        tails_turn,
         preview_cards,
         inputs,
         list_campaign,
@@ -258,16 +247,10 @@ enum Running {
 
 impl Running {
     fn step(&mut self, buttons: u8) -> Result<(), String> {
-        self.step_p2(buttons, 0)
-    }
-
-    fn step_p2(&mut self, buttons: u8, buttons_p2: u8) -> Result<(), String> {
         match self {
-            Running::Direct(s) => s
-                .step_with_p2(buttons, buttons_p2)
-                .map_err(|e| e.to_string()),
+            Running::Direct(s) => s.step(buttons).map_err(|e| e.to_string()),
             Running::Campaign(c) => {
-                c.step_p2(buttons, buttons_p2);
+                c.step(buttons);
                 match c.last_error.take() {
                     Some(e) => Err(e),
                     None => Ok(()),
@@ -404,12 +387,6 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        if opts.two_player {
-            runner.set_two_player(true);
-        }
-        if opts.tails_turn {
-            runner.set_current_player(1);
-        }
         if opts.preview_cards {
             runner.flow.progress.cards = vec![
                 engine_core::frontend::Card::Ring,
@@ -529,8 +506,7 @@ fn main() {
 
         if !paused {
             let buttons = read_buttons(&window);
-            let buttons_p2 = read_buttons_p2(&window);
-            if let Err(e) = running.step_p2(buttons, buttons_p2) {
+            if let Err(e) = running.step(buttons) {
                 if !reported_error {
                     eprintln!("session stopped: {e}");
                     reported_error = true;
@@ -674,36 +650,6 @@ fn read_buttons(window: &Window) -> u8 {
     }
     if window.is_key_down(Key::Enter) {
         b |= 0x80; // Start
-    }
-    b
-}
-
-/// Tails' pad for the title's 2 PLAYER mode: WASD, J = B, K = C, L = A, I = Start.
-fn read_buttons_p2(window: &Window) -> u8 {
-    let mut b = 0u8;
-    if window.is_key_down(Key::W) {
-        b |= 0x01;
-    }
-    if window.is_key_down(Key::S) {
-        b |= 0x02;
-    }
-    if window.is_key_down(Key::A) {
-        b |= 0x04;
-    }
-    if window.is_key_down(Key::D) {
-        b |= 0x08;
-    }
-    if window.is_key_down(Key::J) {
-        b |= 0x10;
-    }
-    if window.is_key_down(Key::K) {
-        b |= 0x20;
-    }
-    if window.is_key_down(Key::L) {
-        b |= 0x40;
-    }
-    if window.is_key_down(Key::I) {
-        b |= 0x80;
     }
     b
 }

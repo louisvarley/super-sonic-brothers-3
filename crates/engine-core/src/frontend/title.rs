@@ -552,6 +552,7 @@ const LOGO_DROP_AT: i32 = 0x4C + 0x14 + 0x20 + 0x03;
 pub struct TitleScreen {
     pub ctx: FrontContext,
     pub action: Option<TitleAction>,
+    sounds: Vec<u16>,
     ppu: NesPpu,
     mode: TitleMode,
     vert_scroll: i32,
@@ -561,6 +562,7 @@ pub struct TitleScreen {
     glow_index: u8,
     menu: bool,
     player: usize,
+    single_player: bool,
     cursor_shown: bool,
     reset_count: i32,
     reset_fine: i32,
@@ -586,6 +588,7 @@ impl TitleScreen {
         let mut s = Self {
             ctx: FrontContext::new(a.clone()),
             action: None,
+            sounds: Vec::new(),
             ppu: NesPpu {
                 horizontal_mirroring: true,
                 ..Default::default()
@@ -598,6 +601,7 @@ impl TitleScreen {
             glow_index: 0,
             menu: false,
             player: 0,
+            single_player: false,
             cursor_shown: true,
             reset_count: 20,
             reset_fine: 60,
@@ -813,6 +817,9 @@ impl TitleScreen {
 
     fn drop_frame(&mut self) {
         self.vert_scroll = (self.vert_scroll - 5).max(0);
+        if self.vert_scroll == 0 {
+            self.sounds.push(crate::audio::sfx::ids::SMASH);
+        }
         self.frame();
     }
 
@@ -853,6 +860,10 @@ impl TitleScreen {
         }
         let scroll = self.vert_scroll;
         let since = self.since_curtain;
+        let before = self.flags.clone();
+        let sonic_phase = self.sonic.phase;
+        let sonic_rev = self.sonic.rev;
+        let tails_phase = self.tails.phase;
         let mut a = self.actors;
         let goomba_x = a[2].x;
         self.sonic
@@ -869,6 +880,33 @@ impl TitleScreen {
             );
         }
         self.actors = a;
+        if !before.goomba_hit && self.flags.goomba_hit {
+            self.sounds.push(crate::audio::sfx::ids::EXPLOSION);
+        }
+        if !before.shell_kicked && self.flags.shell_kicked {
+            self.sounds.push(crate::audio::sfx::ids::SMASH);
+        }
+        if !before.tails_home && self.flags.tails_home {
+            self.sounds.push(crate::audio::sfx::ids::HELICOPTER);
+        }
+        if self.sonic.phase == 9 && sonic_phase != 9 {
+            self.sounds.push(crate::audio::sfx::ids::SPINDASH_REV);
+        }
+        if self.sonic.phase == 10 && self.sonic.rev > sonic_rev {
+            self.sounds.push(crate::audio::sfx::ids::SPINDASH_REV);
+        }
+        if self.sonic.phase == 11 && sonic_phase != 11 {
+            self.sounds.push(crate::audio::sfx::ids::SPINDASH_RELEASE);
+        }
+        if matches!(self.sonic.phase, 13 | 14) && !matches!(sonic_phase, 13 | 14) {
+            self.sounds.push(crate::audio::sfx::ids::ROLL);
+        }
+        if self.tails.phase == 3 && tails_phase != 3 {
+            self.sounds.push(crate::audio::sfx::ids::JUMP);
+        }
+        if matches!(self.tails.phase, 6 | 9) && !matches!(tails_phase, 6 | 9) {
+            self.sounds.push(crate::audio::sfx::ids::HELICOPTER);
+        }
     }
 
     fn begin_menu(&mut self, skip: bool) {
@@ -904,10 +942,13 @@ impl TitleScreen {
                 return false;
             }
         }
-        if ((press & 0x70) != 0 && (press & 0x80) == 0) || (press & 0x03) != 0 {
+        if !self.single_player
+            && (((press & 0x70) != 0 && (press & 0x80) == 0) || (press & 0x03) != 0)
+        {
             self.player ^= 1;
         }
         if press & 0x80 != 0 {
+            self.sounds.push(crate::audio::sfx::ids::RING);
             return true;
         }
         self.frame();
@@ -946,9 +987,15 @@ impl TitleScreen {
         self.action.take()
     }
 
-    /// 0 for 1 PLAYER, 1 for 2 PLAYER (Tails is player 2).
-    pub fn players(&self) -> usize {
-        self.player
+    /// Sonic SFX ids queued by the curtain/logo/menu, for the title's 68k audio state.
+    pub fn take_sounds(&mut self) -> Vec<u16> {
+        std::mem::take(&mut self.sounds)
+    }
+
+    /// The native build no longer offers 2 PLAYER: blank the menu line while keeping the golden title art intact.
+    pub fn set_single_player(&mut self) {
+        self.single_player = true;
+        self.player = 0;
     }
 
     fn present(&mut self) {
@@ -1091,6 +1138,23 @@ impl TitleScreen {
     pub fn render_rgba(&mut self, v: &mut Vdp) -> Vec<u8> {
         let vs = self.vert_scroll;
         let a = move |line: usize| Self::plane_a(line, vs);
-        self.ctx.render_rgba(v, &a, &Self::plane_b)
+        let mut rgba = self.ctx.render_rgba(v, &a, &Self::plane_b);
+        if self.menu && self.single_player {
+            // The title art still contains SMB3's "2 PLAYER GAME" line; cover it with the nearby backdrop.
+            let source = (170 * 320 + 100) * 4;
+            let background = [
+                rgba[source],
+                rgba[source + 1],
+                rgba[source + 2],
+                rgba[source + 3],
+            ];
+            for y in 161..178 {
+                for x in 88..232 {
+                    let i = (y * 320 + x) * 4;
+                    rgba[i..i + 4].copy_from_slice(&background);
+                }
+            }
+        }
+        rgba
     }
 }

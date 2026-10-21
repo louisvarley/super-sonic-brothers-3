@@ -38,13 +38,6 @@ pub struct MapProgress {
     pub deck: Option<Vec<i32>>,
     pub deck_matches: i32,
     pub power_ups: Vec<i32>,
-    /// Tails is player 2 (the title's 2 PLAYER selection).
-    pub two_player: bool,
-    /// 2P turns: 0 = Sonic's go, 1 = Tails' go.
-    pub current_player: u8,
-    /// Each player's own life stock in 2P mode; `lives` is the active player's.
-    pub lives_p1: i32,
-    pub lives_p2: i32,
 }
 impl Default for MapProgress {
     fn default() -> Self {
@@ -61,10 +54,6 @@ impl Default for MapProgress {
             deck: None,
             deck_matches: 0,
             power_ups: Vec::new(),
-            two_player: false,
-            current_player: 0,
-            lives_p1: 4,
-            lives_p2: 4,
         }
     }
 }
@@ -236,6 +225,8 @@ pub struct GameFlow {
     pub screen: ScreenState,
     pub vdp: Vdp,
     sound_effects: Vec<&'static str>,
+    title_sounds: Vec<u16>,
+    single_player: bool,
 }
 #[allow(clippy::large_enum_variant)]
 pub enum ScreenState {
@@ -298,6 +289,8 @@ impl GameFlow {
             screen,
             vdp: Vdp::new(),
             sound_effects: Vec::new(),
+            title_sounds: Vec::new(),
+            single_player: false,
         }
     }
 
@@ -307,12 +300,10 @@ impl GameFlow {
         match &mut self.screen {
             ScreenState::Title(s) => {
                 s.step(&self.assets, buttons);
+                self.title_sounds.extend(s.take_sounds());
                 match s.take_action() {
                     Some(TitleAction::StartGame) => {
-                        let two_player = s.players() == 1;
-                        self.sound_effects.push("mario-coin");
                         self.progress = MapProgress::default();
-                        self.progress.two_player = two_player;
                         self.screen = ScreenState::Map(MapScreen::with_campaign(
                             &self.assets,
                             self.progress.clone(),
@@ -321,7 +312,11 @@ impl GameFlow {
                         ));
                     }
                     Some(TitleAction::BackToTitle) => {
-                        self.screen = ScreenState::Title(TitleScreen::new(&self.assets));
+                        let mut title = TitleScreen::new(&self.assets);
+                        if self.single_player {
+                            title.set_single_player();
+                        }
+                        self.screen = ScreenState::Title(title);
                     }
                     None => {}
                 }
@@ -350,13 +345,6 @@ impl GameFlow {
                 s.step(&self.assets, buttons);
                 if s.finished() {
                     let mut progress = s.progress().clone();
-                    if progress.two_player {
-                        if progress.current_player == 1 {
-                            progress.lives_p2 = progress.lives;
-                        } else {
-                            progress.lives_p1 = progress.lives;
-                        }
-                    }
                     progress.clear_panel(SPADE_TILE);
                     self.progress = progress;
                     self.screen = ScreenState::Map(MapScreen::with_campaign(
@@ -369,6 +357,20 @@ impl GameFlow {
             }
         }
         action
+    }
+
+    /// Native builds hide the unusable 2 PLAYER menu row; golden screens keep the SMB3 title untouched.
+    pub fn set_single_player(&mut self, enabled: bool) {
+        self.single_player = enabled;
+        if enabled {
+            if let ScreenState::Title(s) = &mut self.screen {
+                s.set_single_player();
+            }
+        }
+    }
+
+    pub fn take_title_sounds(&mut self) -> Vec<u16> {
+        std::mem::take(&mut self.title_sounds)
     }
 
     pub fn take_map_sound_effects(&mut self) -> Vec<&'static str> {
@@ -628,7 +630,7 @@ impl MatchScreen {
         }
     }
     fn video_update(&mut self, item: usize) {
-        let addr = self.ctx.assets.prg_word(30, 0x803E + item * 2) as usize;
+        let addr = self.ctx.assets.prg_word_le(30, 0x803E + item * 2) as usize;
         let bank = if addr >= 0xC000 { 22 } else { 30 };
         self.ppu.run_stream(|a| self.ctx.assets.prg(bank, a), addr);
     }
@@ -1655,16 +1657,11 @@ impl MapScreen {
         let mut sk = SpriteKit::new(&mut p.ram, &mut p.vram);
         sk.begin();
         let fr = ((self.frames >> (if self.move_left > 0 { 3 } else { 4 })) & 1) as usize;
-        let avatar = if self.progress.two_player && self.progress.current_player == 1 {
-            0x5C8
-        } else {
-            0x5C0
-        };
         sk.piece(
             self.x + 32,
             self.y - 8 - 1,
             5,
-            (0x8000 | (avatar + fr * 4)) as u16,
+            (0x8000 | (0x5C0 + fr * 4)) as u16,
         );
         for (x, y, size, pattern) in card_pieces {
             sk.piece(x, y, size, pattern);
@@ -1715,8 +1712,7 @@ impl MapScreen {
                 && !self.progress.is_cleared(SPADE_TILE);
             let campaign_area = self.areas.get(&tile).filter(|a| a.available()).cloned();
             if legacy_stage || minigame || campaign_area.is_some() {
-                self.sound_effects.push("map-move");
-                self.pending_action = Some(if legacy_stage {
+                self.action = Some(if legacy_stage {
                     let zone = panel_zone(tile).unwrap();
                     MapAction::StartZone { zone, act: 1 }
                 } else if minigame {
@@ -1726,7 +1722,6 @@ impl MapScreen {
                         act: campaign_area.unwrap().act,
                     }
                 });
-                self.entry_progress = 1;
             } else {
                 self.step_move(buttons);
             }

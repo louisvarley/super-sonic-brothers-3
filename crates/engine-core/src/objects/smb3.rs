@@ -1135,8 +1135,8 @@ pub fn roulette_goal(
     ram: &mut Ram,
     o: Obj,
     goal_card: &mut Option<i32>,
-    monitor_frame_offsets: &[usize],
-    user_changes: bool,
+    _monitor_frame_offsets: &[usize],
+    _user_changes: bool,
 ) {
     if o.id(ram) == 0xE7 {
         run_goal_text(ram, o);
@@ -1175,11 +1175,6 @@ pub fn roulette_goal(
             let course_clear_at = 0x60 - 0x1E;
             let got_card_at = 0x60 - 1;
             let end_at = got_card_at + 150;
-            if t == 1 && user_changes {
-                // The SMB3 goal-card art is not loaded by this port; show the Sonic monitor icon immediately so
-                // the card area is never an empty box during the goal animation.
-                spawn_goal_card(ram, o, o.byte(ram, 0x32), monitor_frame_offsets);
-            }
             if t == course_clear_at {
                 sfx::mario(ram, sfx::mario::COURSE_CLEAR);
                 goal_spawn_text(ram, 3, 104 - 4, 56 + 16);
@@ -1193,33 +1188,6 @@ pub fn roulette_goal(
         }
         _ => {}
     }
-}
-
-/// Replaces the unported SMB3 goal-card art with the corresponding Sonic monitor icon (ring, shield or
-/// invincibility) from the level's monitor graphics. The icon uses the existing monitor-contents display routine so
-/// it does not grant anything here; the card/life award happens when the goal finishes.
-fn spawn_goal_card(ram: &mut Ram, goal: Obj, card: u8, frame_offsets: &[usize]) {
-    let Some(slot) = find_free_slot(ram) else {
-        return;
-    };
-    let frame = match card {
-        0 => 5,
-        1 => 7,
-        _ => 8,
-    };
-    slot.set_id(ram, 0x2E);
-    slot.set_routine(ram, 4);
-    slot.set_word(ram, 0x1E, 0x7FFF);
-    slot.set_art_tile(ram, 0x8680);
-    slot.set_render_flags(ram, 0x24);
-    slot.set_priority(ram, 3);
-    slot.set_width_pixels(ram, 8);
-    slot.set_mapping_frame(ram, frame);
-    if let Some(offset) = frame_offsets.get(frame as usize) {
-        slot.set_mappings(ram, 0x15C7A + *offset as u32 + 2);
-    }
-    slot.set_x(ram, goal.x(ram));
-    slot.set_y(ram, goal.y(ram).wrapping_sub(16));
 }
 
 fn goal_untouched(ram: &mut Ram, o: Obj) {

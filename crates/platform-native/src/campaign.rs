@@ -1,7 +1,7 @@
 //! Campaign mode: world maps, map-panel entry, campaign area sessions, and map return.
 
 use engine_core::animation::{SonicAnimation, TailsAnimation};
-use engine_core::audio::AudioState;
+use engine_core::audio::{sfx, AudioState};
 use engine_core::collision::CollisionSets;
 use engine_core::frontend::{
     Card, FrontendAssets, GameFlow, MapAction, MapProgress, ScreenState, Start, SPADE_TILE,
@@ -26,9 +26,11 @@ pub struct CampaignRunner {
     pub session: Option<Session>,
     map_audio: Option<Box<AudioState>>,
     map_ram: Ram,
+    title_audio: Option<Box<AudioState>>,
+    title_ram: Ram,
+    entry_overlay: u8,
     map_music: u16,
     current_act: Option<u16>,
-    force_two_player: bool,
     pub ticks: u32,
     pub last_error: Option<String>,
 }
@@ -72,7 +74,8 @@ impl CampaignRunner {
         if !(1..=8).contains(&world) {
             return Err(format!("world {world} out of range (1-8)"));
         }
-        let flow = GameFlow::new_at(assets.clone(), start, world, screen);
+        let mut flow = GameFlow::new_at(assets.clone(), start, world, screen);
+        flow.set_single_player(true);
         let mut runner = Self {
             archive,
             campaign,
@@ -83,47 +86,35 @@ impl CampaignRunner {
             session: None,
             map_audio: None,
             map_ram: Ram::new(),
+            title_audio: None,
+            title_ram: Ram::new(),
+            entry_overlay: 0,
             map_music: 0x94,
             current_act: None,
-            force_two_player: false,
             ticks: 0,
             last_error: None,
         };
         if matches!(start, Start::Map | Start::Match) {
             runner.start_map_audio(world);
         }
+        if matches!(start, Start::Title) {
+            runner.start_title_audio();
+        }
         Ok(runner)
     }
 
-    /// `--two-player`: keep Tails as player 2 across title/map/level changes.
-    /// `--tails-turn`: start 2P on Tails' go (for demonstration/testing).
-    pub fn set_current_player(&mut self, player: u8) {
-        self.flow.progress.two_player = true;
-        self.flow.progress.current_player = player.min(1);
-        self.flow.progress.lives = if self.flow.progress.current_player == 1 {
-            self.flow.progress.lives_p2
-        } else {
-            self.flow.progress.lives_p1
+    fn start_title_audio(&mut self) {
+        if self.title_audio.is_some() {
+            return;
+        }
+        let Ok(assets) = load_audio_assets_for_zone(&self.archive, 0x40, None) else {
+            return;
         };
-        if matches!(self.flow.screen, ScreenState::Map(_)) {
-            self.flow
-                .set_progress_map(self.flow.progress.clone(), false);
-        }
-    }
-
-    pub fn set_two_player(&mut self, enabled: bool) {
-        self.force_two_player = enabled;
-        if enabled {
-            self.flow.progress.two_player = true;
-            self.flow.progress.current_player = 0;
-            self.flow.progress.lives_p1 = self.flow.progress.lives_p1.max(1);
-            self.flow.progress.lives_p2 = self.flow.progress.lives_p2.max(1);
-            self.flow.progress.lives = self.flow.progress.lives_p1;
-            if matches!(self.flow.screen, ScreenState::Map(_)) {
-                self.flow
-                    .set_progress_map(self.flow.progress.clone(), false);
-            }
-        }
+        self.title_ram = Ram::new();
+        self.title_ram.w8(vars::SOUND_DRIVER_SELECT, 1);
+        let mut audio = Box::new(AudioState::new(assets));
+        audio.start_music(&mut self.title_ram, 0);
+        self.title_audio = Some(audio);
     }
 
     /// Direct `--campaign-act`: mark the area's map owner, then enter it.
@@ -153,6 +144,7 @@ impl CampaignRunner {
         self.map_music = assets.extra_music.unwrap_or(0x94);
         let mut audio = Box::new(AudioState::new(assets));
         audio.start_music(&mut self.map_ram, self.map_music);
+        audio.play_effect("map-world");
         self.map_audio = Some(audio);
     }
 
@@ -175,8 +167,6 @@ impl CampaignRunner {
             }
         }
         self.flow.progress.power_ups.clear();
-        let active = self.flow.progress.current_player;
-        session.set_active_player(active);
     }
 
     fn start_area(&mut self, act: u16) -> Result<(), String> {
@@ -416,21 +406,13 @@ impl CampaignRunner {
     }
 
     /// One game frame. Map actions load a level; an exited level returns to the map.
-    #[allow(dead_code)]
     pub fn step(&mut self, buttons: u8) {
-        self.step_p2(buttons, 0);
-    }
-
-    /// One game frame with Tails' pad. In 1-player mode player 2 is ignored.
-    pub fn step_p2(&mut self, buttons: u8, buttons_p2: u8) {
         self.ticks += 1;
+        if self.entry_overlay > 0 {
+            self.entry_overlay -= 1;
+        }
         if let Some(session) = self.session.as_mut() {
-            let p2 = if self.flow.progress.two_player {
-                buttons_p2
-            } else {
-                0
-            };
-            session.step_with_p2(buttons, p2).ok();
+            session.step(buttons).ok();
             if let Some(exit) = session.take_pipe_exit() {
                 self.handle_pipe_exit(exit);
                 return;
@@ -443,20 +425,34 @@ impl CampaignRunner {
         if let Some(audio) = self.map_audio.as_mut() {
             audio.update(&mut self.map_ram);
         }
-        let map_buttons = if self.flow.progress.two_player && self.flow.progress.current_player == 1
-        {
-            buttons | buttons_p2
-        } else {
-            buttons
-        };
-        let action = self.flow.step(map_buttons);
-        if self.force_two_player
-            && matches!(self.flow.screen, ScreenState::Map(_))
-            && !self.flow.progress.two_player
-        {
-            self.flow.progress.two_player = true;
-            self.flow
-                .set_progress_map(self.flow.progress.clone(), false);
+        let was_title = matches!(self.flow.screen, ScreenState::Title(_));
+        if was_title {
+            self.start_title_audio();
+            if let Some(audio) = self.title_audio.as_mut() {
+                audio.update(&mut self.title_ram);
+            }
+        }
+        let action = self.flow.step(buttons);
+        if was_title {
+            let sounds = self.flow.take_title_sounds();
+            if matches!(self.flow.screen, ScreenState::Title(_)) {
+                for sound in sounds {
+                    sfx::sonic(&mut self.title_ram, sound);
+                }
+            } else {
+                if matches!(self.flow.screen, ScreenState::Map(_)) && self.map_audio.is_none() {
+                    self.start_map_audio(self.flow.progress.world as u8);
+                }
+                if let Some(audio) = self.map_audio.as_mut() {
+                    // The Start ring is queued as the title hands over to the map; the map's 68k driver plays it.
+                    for sound in sounds {
+                        audio.play_sound(&mut self.map_ram, sound);
+                    }
+                }
+            }
+        }
+        if !matches!(self.flow.screen, ScreenState::Title(_)) {
+            self.title_audio = None;
         }
         if matches!(self.flow.screen, ScreenState::Map(_)) && self.map_audio.is_none() {
             self.start_map_audio(self.flow.progress.world as u8);
@@ -476,8 +472,20 @@ impl CampaignRunner {
             }
         }
         let result = match action {
-            Some(MapAction::StartArea { act }) => self.start_area(act),
-            Some(MapAction::StartZone { zone, act }) => self.start_zone(zone, act),
+            Some(MapAction::StartArea { act }) => {
+                let result = self.start_area(act);
+                if result.is_ok() {
+                    self.entry_overlay = 32;
+                }
+                result
+            }
+            Some(MapAction::StartZone { zone, act }) => {
+                let result = self.start_zone(zone, act);
+                if result.is_ok() {
+                    self.entry_overlay = 32;
+                }
+                result
+            }
             Some(MapAction::StartMatch) | Some(MapAction::BackToMap { .. }) | None => Ok(()),
         };
         if let Err(e) = result {
@@ -517,22 +525,6 @@ impl CampaignRunner {
                 p.cards.clear();
             }
         }
-        if p.two_player {
-            if p.current_player == 1 {
-                p.lives_p2 = p.lives;
-            } else {
-                p.lives_p1 = p.lives;
-            }
-            let next = 1 - p.current_player;
-            let next_lives = if next == 0 { p.lives_p1 } else { p.lives_p2 };
-            if next_lives > 0 {
-                p.current_player = next;
-                p.lives = next_lives;
-            } else if p.lives <= 0 {
-                // Both stocks are gone: a new adventure.
-                p = MapProgress::default();
-            }
-        }
         if p.lives <= 0 {
             // A new adventure rather than the still-placeholder title screen (K5).
             p = MapProgress::default();
@@ -543,7 +535,13 @@ impl CampaignRunner {
 
     pub fn render(&mut self) -> Vec<u8> {
         match self.session.as_mut() {
-            Some(s) => s.render(),
+            Some(s) => {
+                let mut frame = s.render();
+                if self.entry_overlay > 0 {
+                    draw_entry_border(&mut frame, 32 - self.entry_overlay);
+                }
+                frame
+            }
             None => self.flow.render_rgba(),
         }
     }
@@ -552,6 +550,8 @@ impl CampaignRunner {
         if let Some(s) = self.session.as_mut() {
             s.render_audio(out, frames);
         } else if let Some(a) = self.map_audio.as_mut() {
+            a.render(out, frames);
+        } else if let Some(a) = self.title_audio.as_mut() {
             a.render(out, frames);
         } else {
             out.fill(0);
@@ -575,6 +575,27 @@ impl CampaignRunner {
             p.lives,
             p.cards.len()
         )
+    }
+}
+
+/// SMB3's closing entry border while the level and its `enter-level` sound start together.
+fn draw_entry_border(rgba: &mut [u8], frames: u8) {
+    const WIDTH: usize = 320;
+    const HEIGHT: usize = 224;
+    let thickness = (frames as usize * 4).min(112);
+    if thickness == 0 {
+        return;
+    }
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            if x < thickness || x >= WIDTH - thickness || y < thickness || y >= HEIGHT - thickness {
+                let i = (y * WIDTH + x) * 4;
+                rgba[i] = 0;
+                rgba[i + 1] = 0;
+                rgba[i + 2] = 0;
+                rgba[i + 3] = 255;
+            }
+        }
     }
 }
 
@@ -639,39 +660,11 @@ mod tests {
         assert!(runner.flow.progress.lives > 0);
     }
     #[test]
-    fn two_player_turns_switch_after_a_level() {
-        let Some(mut runner) = runner_with_start(Start::Map) else {
+    fn the_title_has_its_own_68k_sfx_driver() {
+        let Some(runner) = runner_with_start(Start::Title) else {
             return;
         };
-        runner.set_two_player(true);
-        runner.start_act(29).expect("1-1 starts");
-        if let Some(session) = runner.session.as_mut() {
-            session.goal_card = Some(0);
-        }
-        runner.finish_level();
-        assert_eq!(
-            runner.flow.progress.current_player, 1,
-            "Tails gets the next go"
-        );
-        assert_eq!(runner.flow.progress.lives, 4);
-    }
-
-    #[test]
-    fn tails_turn_uses_the_main_slot_without_the_tails_alone_error() {
-        let Some(mut runner) = runner_with_start(Start::Map) else {
-            return;
-        };
-        runner.set_two_player(true);
-        runner.set_current_player(1);
-        runner.start_act(29).expect("1-1 starts");
-        let session = runner.session.as_mut().expect("level session");
-        assert_eq!(session.active_player(), 1);
-        assert_eq!(session.world.ram.u16(vars::PLAYER_MODE), 3);
-        for _ in 0..120 {
-            session.step(0).expect("Tails turn steps");
-        }
-        assert!(session.stopped.is_none());
-        assert!(!session.exited);
+        assert!(runner.title_audio.is_some(), "title SFX driver loaded");
     }
 
     #[test]

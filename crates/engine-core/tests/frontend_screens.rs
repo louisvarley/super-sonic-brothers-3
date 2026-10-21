@@ -1,7 +1,7 @@
 //! Phase 2 M5c: SMB3 front-end framebuffer hashes.
 //!
-//! Title, title→map and map are the strict gate. The card game is ported and covered by `tests/match_game.rs`;
-//! its full bonus-room framebuffer trace stays ignored until the room art matches.
+//! Title, title→map, map and the bonus room/card game are all strict gates now that the card game's video-update
+//! table is read little-endian like SMB3's assembler tables.
 use engine_core::frontend::{GameFlow, Start};
 use golden_trace::{compare_masked, CompareMask, Entity, Tick, Trace};
 use rom_assets::{load_frontend_assets, Archive};
@@ -151,7 +151,6 @@ fn title_and_map_framebuffer_hashes_match() {
 }
 
 #[test]
-#[ignore = "K5-match: the card game is ported (tests/match_game.rs), but the bonus-room framebuffer still diverges at tick 30."]
 fn match_framebuffer_hashes_match() {
     run_cases(&[("frontend-match", Start::Match, "")]);
 }

@@ -50,15 +50,15 @@ _(No other confirmed game bugs yet; more will be added as the later milestones a
 | **reproduction** | `cargo test -p engine-core --test render_motion -- --nocapture` (not ignored). |
 | **closing fixes** | Game Over `$39` waits for PLC 3 and spawns both halves from the player check; explosions animate on their spawn tick (needed by the frozen 1-3 spindash screen); Buzz Bomber/missile, Masher, Buzzer, Coconuts, Chopper and lost-rings animation blocks were wired in; dust skid puffs spawn; EHZ's near-hills background advances once per five-line band. |
 
-## M5c front-end screens: title and map exact, card game ported (room art still differs)
+## M5c front-end screens: title, map and card game exact (closed)
 
 | | |
 |---|---|
 | **id** | K5 |
 | **state** | **Title, title?map and map are exact.** `frontend-title` matches all 600 ticks, `frontend-title-map` all 700 ticks, and `frontend-map` all 400 ticks, including every 30-tick framebuffer hash. `Sb3TitleScreen` ports the curtain, logo streams, drop/shake, glow, palette fades, 1P/2P menu, skip/timeout, Sonic/Tails/Goomba/Koopa actor scripts and title line scroll. |
 | **card game** | The N-Spade game is ported from `MatchGameScreen.cs`: bonus room, intro text/wait, fade, 18-card shuffled deck, cursor/flip/mismatch states, persistent deck, Sonic-monitor faces and rewards (lives, rings, speed shoes/shield/invincibility). `tests/match_game.rs` covers the deal; prizes spawn as monitors at the next act. |
-| **remaining** | The bonus-room framebuffer still diverges from the legacy `frontend-match` trace at tick 30 (legacy `16094679856854692594`, port `15085034060434167613`), so that strict golden stays ignored. The card logic is covered behaviourally instead. Card presentation uses the map's Sonic monitor frames and a ring cursor rather than the SMB3 bracket/face templates. |
-| **reproduction** | `cargo test -p engine-core --test frontend_screens -- --nocapture` (strict title/title-map/map); `cargo test -p engine-core --test match_game -- --nocapture`; `cargo test -p engine-core --test frontend_screens -- --ignored --nocapture` (K5-match). |
+| **closed** | The `frontend-match` framebuffer trace now matches for all 400 ticks. The root cause was `Video_Upd_Table` being read big-endian; SMB3's assembler tables are little-endian (`prg_word_le`), which had corrupted the bonus room's nametable. Card presentation uses the map's Sonic monitor frames and a ring cursor. |
+| **reproduction** | `cargo test -p engine-core --test frontend_screens -- --nocapture` (strict title/title-map/map/match); `cargo test -p engine-core --test match_game -- --nocapture`. |
 
 ## M6a 68k audio: exact against the legacy oracle (closed for SMB3 levels)
 

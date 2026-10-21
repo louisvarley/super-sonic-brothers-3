@@ -706,6 +706,28 @@ sprite clipping. These are the next batch.
   `areaId`; this needs the stock SMB3 castle extractor (M7), not a runtime patch. The same is true of the castle-like
   `ts07` entries in other worlds.
 
+## 2026-10-21 - User change batch 4: audio/card/goal fixes, 2P removed
+
+* **Card game room fixed (K5 closed)**: the `Video_Upd_Table` entries are little-endian assembler tables, but the
+  port read them big-endian. That corrupted the bonus room's nametable/instruction box. `video_update` now uses
+  `prg_word_le`; `frontend-match` matches all 400 ticks and is a normal strict test (no longer ignored).
+* **Title intro audio**: the title now has its own 68k SFX driver and queues the C# `Sb3TitleScreen` sounds — logo-drop
+  Smash, menu cursor Blip/Ring, spindash rev/release, roll, jump, Goomba explosion, shell Smash and Tails' helicopter.
+  It uses a separate title RAM/driver so it cannot disturb level/map audio.
+* **Map-load sound**: every map load queues `map-world` (SMB3's overworld arrival sound) on the map audio player.
+* **Entry sync**: the map action now hands over immediately. The level starts with `enter-level` on its own audio and a
+  32-frame black border closes over the **level** (not the map), so the transition animation and loading sound start
+  together. There is no second CampaignRunner pre-roll.
+* **Goal card roulette**: the goal object gets the legacy `RouletteGoal` three-frame mapping table built from Sonic
+  monitor frames (ring/shield/invincibility) plus card-icon frames for the "you got a card" text object. The card
+  visibly changes every 8 frames, stops on the touched card, and the final card icon is shown before the map slot
+  award. The table is installed only for campaign sessions, preserving the direct goal golden traces.
+* **2 PLAYER removed**: the title no longer offers/selects it (the native title blanks the dead SMB3 2 PLAYER line),
+  the `--two-player`/`--tails-turn` flags and campaign turn/active-player code are gone, and the player-2 pad is
+  neutral. The original Tails CPU sidekick in 1-player mode remains.
+* **Still a data gap**: World 1's castle panels (tileset 7) have no converted campaign area at all, so they still
+  cannot have doors, enemies or fireballs. That needs the stock SMB3 castle extractor, not a runtime fake.
+
 ## Appendix: Phase 2 plan (approved 2026-10-19)
 
 Two workstreams, per the owner's decision:
