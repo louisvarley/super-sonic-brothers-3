@@ -42,6 +42,8 @@ pub struct CampaignRunner {
     title_ram: Ram,
     entry: Option<EntryTransition>,
     return_transition: u8,
+    title_card: u32,
+    title_text: String,
     map_world_played: bool,
     map_music: u16,
     current_act: Option<u16>,
@@ -104,6 +106,8 @@ impl CampaignRunner {
             title_ram: Ram::new(),
             entry: None,
             return_transition: 0,
+            title_card: 0,
+            title_text: String::new(),
             map_world_played: false,
             map_music: 0x94,
             current_act: None,
@@ -189,6 +193,36 @@ impl CampaignRunner {
         self.flow.progress.power_ups.clear();
     }
 
+    fn card_name(&self, area: Option<&rom_assets::CampaignArea>, zone: u8, act: u8) -> String {
+        const THEMES: [&str; 8] = [
+            "GRASS WORLD",
+            "DESERT WORLD",
+            "OCEAN WORLD",
+            "GIANT WORLD",
+            "SKY WORLD",
+            "ICE WORLD",
+            "PIPE WORLD",
+            "DARK WORLD",
+        ];
+        let world = self.flow.progress.world.clamp(1, 8) as usize;
+        let theme = THEMES[world - 1];
+        if let Some(area) = area {
+            if area.source.tileset == 7 {
+                return format!("{theme} CASTLE");
+            }
+            let zone_no = (((area.column - 4).max(-2) / 2) + 1).clamp(1, 9);
+            format!("{theme} ZONE {zone_no}")
+        } else {
+            let zone_no = match zone {
+                0x40 => 1,
+                0x41 => 2,
+                0x42 => 3,
+                _ => act.max(1),
+            };
+            format!("{theme} ZONE {zone_no}")
+        }
+    }
+
     fn start_area(&mut self, act: u16) -> Result<(), String> {
         self.start_area_with_entry(act, true)
     }
@@ -222,6 +256,8 @@ impl CampaignRunner {
         self.map_audio = None;
         self.session = Some(session);
         self.current_act = Some(act);
+        self.title_text = self.card_name(Some(&area), CAMPAIGN_ZONE, act_byte);
+        self.title_card = 120;
         self.last_error = None;
         Ok(())
     }
@@ -254,6 +290,8 @@ impl CampaignRunner {
         self.map_audio = None;
         self.session = Some(session);
         self.current_act = None;
+        self.title_text = self.card_name(None, zone, act);
+        self.title_card = 120;
         self.last_error = None;
         Ok(())
     }
@@ -460,7 +498,11 @@ impl CampaignRunner {
             return;
         }
         if let Some(session) = self.session.as_mut() {
-            session.step(buttons).ok();
+            let level_buttons = if self.title_card > 0 { 0 } else { buttons };
+            if self.title_card > 0 {
+                self.title_card -= 1;
+            }
+            session.step(level_buttons).ok();
             if let Some(exit) = session.take_pipe_exit() {
                 self.handle_pipe_exit(exit);
                 return;
@@ -597,7 +639,13 @@ impl CampaignRunner {
             return frame;
         }
         match self.session.as_mut() {
-            Some(s) => s.render(),
+            Some(s) => {
+                let mut frame = s.render();
+                if self.title_card > 0 {
+                    draw_level_card(&mut frame, &self.title_text);
+                }
+                frame
+            }
             None => self.flow.render_rgba(),
         }
     }
@@ -653,6 +701,171 @@ fn draw_entry_border(rgba: &mut [u8], frames: u8) {
             }
         }
     }
+}
+
+/// Sonic 2-style stage card: a blue band with a white border and the campaign's generated zone name.
+fn draw_level_card(rgba: &mut [u8], text: &str) {
+    const W: usize = 320;
+    const H: usize = 224;
+    for px in rgba.chunks_exact_mut(4) {
+        px.copy_from_slice(&[0, 0, 0, 255]);
+    }
+    for y in 86..138 {
+        for x in 14..306 {
+            let i = (y * W + x) * 4;
+            rgba[i..i + 4].copy_from_slice(&[8, 48, 144, 255]);
+        }
+    }
+    for y in 82..142 {
+        for x in 10..310 {
+            if (82..86).contains(&y) || (138..142).contains(&y) || !(14..306).contains(&x) {
+                let i = (y * W + x) * 4;
+                rgba[i..i + 4].copy_from_slice(&[240, 240, 240, 255]);
+            }
+        }
+    }
+    let scale = 2usize;
+    let advance = 6 * scale;
+    let width = text.chars().count() * advance;
+    let mut x = (W.saturating_sub(width)) / 2;
+    let y0 = 101;
+    for ch in text.chars() {
+        if let Some(rows) = glyph5(ch) {
+            for (row, bits) in rows.iter().enumerate() {
+                for col in 0..5 {
+                    if bits & (1 << (4 - col)) == 0 {
+                        continue;
+                    }
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            let px = x + col * scale + dx;
+                            let py = y0 + row * scale + dy;
+                            if px < W && py < H {
+                                let i = (py * W + px) * 4;
+                                rgba[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        x += advance;
+    }
+}
+
+fn glyph5(c: char) -> Option<[u8; 7]> {
+    Some(match c.to_ascii_uppercase() {
+        'A' => [
+            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
+        'B' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
+        ],
+        'C' => [
+            0b01111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01111,
+        ],
+        'D' => [
+            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
+        ],
+        'E' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
+        ],
+        'F' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'G' => [
+            0b01111, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
+        ],
+        'H' => [
+            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
+        'I' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
+        ],
+        'J' => [
+            0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100,
+        ],
+        'K' => [
+            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
+        ],
+        'L' => [
+            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
+        ],
+        'M' => [
+            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
+        ],
+        'N' => [
+            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
+        ],
+        'O' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'P' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'Q' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
+        ],
+        'R' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
+        ],
+        'S' => [
+            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'U' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'V' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
+        ],
+        'W' => [
+            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001,
+        ],
+        'X' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
+        ],
+        'Y' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'Z' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
+        ],
+        '0' => [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        '1' => [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        '2' => [
+            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
+        ],
+        '3' => [
+            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        '4' => [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        '5' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
+        ],
+        '6' => [
+            0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        '7' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        '8' => [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        '9' => [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
+        ],
+        ' ' => [0; 7],
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

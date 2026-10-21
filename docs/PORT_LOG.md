@@ -723,12 +723,20 @@ sprite clipping. These are the next batch.
   black and `enter-level` plays; only after the screen is dark does the level load (with no duplicate entry sound).
   That keeps the animation and the loading sound together and shows no level behind the transition.
 * **Goal card roulette**: the goal object gets the legacy `RouletteGoal` three-frame mapping table built from Sonic
-  monitor frames (ring/shield/invincibility) plus card-icon frames for the "you got a card" text object. The card
-  visibly changes every 8 frames, stops on the touched card, and the final card icon is shown before the map slot
-  award. The table is installed only for campaign sessions, preserving the direct goal golden traces.
-* **2 PLAYER removed**: the title no longer offers/selects it (the native title blanks the dead SMB3 2 PLAYER line),
-  the `--two-player`/`--tails-turn` flags and campaign turn/active-player code are gone, and the player-2 pad is
-  neutral. The original Tails CPU sidekick in 1-player mode remains.
+  monitor frames (ring/shield/invincibility) plus card-icon frames for the "you got a card" text object. The icon
+  offset is the legacy (-8,-8) rather than the monitor object's own offset, so the flashing cards sit in the goal box;
+  the final card icon is shown before the map slot award. The table is installed only for campaign sessions,
+  preserving the direct goal golden traces.
+* **Sonic 2-style stage card**: after the entry wipe the level displays a generated card (`GRASS WORLD ZONE 1`,
+  `DESERT WORLD ZONE 2`, ...). Names come from the world theme and the map column; the level is frozen until the card
+  ends. `--campaign-act` and map entries both show it.
+* **Returning to the map** now opens from a black border over the map (the reverse wipe), instead of snapping.
+* `map-world` is now a first-boot cue only; returning to the map starts the map music without replaying the arrival
+  jingle.
+* **2 PLAYER removed**: the title no longer offers/selects it (the native title covers the dead SMB3 2 PLAYER line
+  with the flat title backdrop), the `--two-player`/`--tails-turn` flags and campaign turn/active-player code are
+  gone, and the player-2 pad is neutral. The original Tails CPU sidekick in 1-player mode remains. The golden title
+  trace still renders the untouched SMB3 menu; only the native single-player screen masks it.
 * **Still a data gap**: World 1's castle panels (tileset 7) have no converted campaign area at all, so they still
   cannot have doors, enemies or fireballs. That needs the stock SMB3 castle extractor, not a runtime fake.
 
